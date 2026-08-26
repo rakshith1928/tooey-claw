@@ -7,6 +7,7 @@
  *   CLAW_PROBE=1 bun run dev → live probe: real session, real plugin tool call
  */
 import { connectOpenCode } from "./opencode"
+import { findClawAgentLeak, findMissingAgents, hasPlugin } from "./checks"
 import { canonical, CLAW_ROOT, ensureDataDir } from "./paths"
 import { existsSync } from "node:fs"
 import path from "node:path"
@@ -50,16 +51,18 @@ async function main() {
   console.log("✓ OpenCode service healthy")
 
   // ── Agent visibility + isolation ─────────────────────────────────────────
+  // Acceptance (ticket 01): claw+worker visible inside the root; a location
+  // outside the root sees neither Claw agents nor the claw-core plugin.
+  // Leaks are hard failures: isolation is an acceptance criterion, not advice.
+  const requiredAgents = ["claw", "worker"] as const
   const agentsInClaw = await port.agents(CLAW_DIR)
-  const ids = new Set(agentsInClaw.map((a) => a.id))
-  for (const required of ["claw", "worker"]) {
-    if (!ids.has(required)) {
-      const hint =
-        `agent '${required}' not visible in the Claw location (${CLAW_DIR}). ` +
+  const missing = findMissingAgents(requiredAgents, agentsInClaw)
+  if (missing.length > 0) {
+    fail(
+      `agent(s) [${missing.join(", ")}] not visible in the Claw location (${CLAW_DIR}). ` +
         `If this is a fresh clone or you just added .opencode/ content, run: ` +
-        `opencode service restart (or opencode2 service restart on beta) and retry.`
-      fail(hint)
-    }
+        `opencode service restart (or opencode2 service restart on beta) and retry.`,
+    )
   }
   console.log(
     `✓ agents visible in Claw location: ${agentsInClaw.map((a) => a.id).sort().join(", ")}`,
@@ -68,25 +71,34 @@ async function main() {
   // Isolation: query a directory definitely outside the Claw project (parent dir).
   // Using cwd is fragile when cwd itself is another Claw checkout (e.g., CLAW_ROOT override).
   const outsideDirRaw = path.dirname(CLAW_DIR)
-  const outside = await port.agents(outsideDirRaw)
-  const clawLeak = outside.filter((a) => a.id === "claw" || a.id === "worker")
-  if (clawLeak.length > 0) {
-    console.warn(
-      `[claw] isolation warning: claw/worker visible at ${outsideDirRaw} (canonical ${canonical(outsideDirRaw)}) — expected only inside ${CLAW_DIR}`,
+  const outsideAgents = await port.agents(outsideDirRaw)
+  const agentLeak = findClawAgentLeak(outsideAgents)
+  if (agentLeak.length > 0) {
+    fail(
+      `isolation violated: agent(s) [${agentLeak.map((a) => a.id).join(", ")}] visible at ` +
+        `${outsideDirRaw} (canonical ${canonical(outsideDirRaw)}) — expected only inside ${CLAW_DIR}`,
     )
-  } else {
-    console.log(`✓ isolation: no claw agents visible at ${outsideDirRaw} (parent of ${CLAW_DIR})`)
   }
+  const outsidePlugins = await port.plugins(outsideDirRaw)
+  if (outsidePlugins === undefined) {
+    console.warn("[claw] plugin listing unavailable outside root — skipping plugin isolation check")
+  } else if (hasPlugin(outsidePlugins, "claw-core")) {
+    fail(
+      `isolation violated: claw-core plugin loaded at ${outsideDirRaw} ` +
+        `(canonical ${canonical(outsideDirRaw)}) — expected only inside ${CLAW_DIR}`,
+    )
+  }
+  console.log(`✓ isolation: no claw agents or claw-core plugin at ${outsideDirRaw} (parent of ${CLAW_DIR})`)
 
   // ── Plugin registration (free) + optional live probe (costs a model call) ─
   const plugins = await port.plugins(CLAW_DIR)
   if (plugins === undefined) {
     console.warn("[claw] plugin listing unavailable in this client/server build — skipping")
   } else {
-    const names = plugins.map((p) => p.id ?? p.name ?? "?").join(", ")
-    if (!names.includes("claw-core")) {
+    if (!hasPlugin(plugins, "claw-core")) {
       fail("claw-core plugin not registered for the Claw location")
     }
+    const names = plugins.map((p) => p.id ?? p.name ?? "?").join(", ")
     console.log(`✓ plugins loaded for Claw location: ${names}`)
   }
 
