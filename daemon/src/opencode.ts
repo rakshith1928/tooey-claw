@@ -23,16 +23,19 @@ export interface ConnectOptions {
   token?: string
 }
 
-function unwrap<T>(value: T | { data?: T } | undefined): T | undefined {
+// The beta wire format wobbles between `T`, `{ data: T }`, and
+// `{ items: T[] }`. Both helpers take `unknown` on purpose: this is the
+// firewall — callers assert the shape they expect, these normalize it.
+function unwrap<T>(value: unknown): T | undefined {
   if (value === undefined || value === null) return undefined
   if (typeof value === "object" && value !== null && "data" in value) {
     return (value as { data?: T }).data ?? undefined
   }
-  return value
+  return value as T
 }
 
-function toArray<T>(value: T[] | { items?: T[] } | undefined): T[] {
-  const v = unwrap(value)
+function toArray<T>(value: unknown): T[] {
+  const v = unwrap<T[] | { items?: T[] }>(value)
   if (Array.isArray(v)) return v
   if (v && typeof v === "object" && Array.isArray((v as { items?: T[] }).items)) {
     return (v as { items: T[] }).items

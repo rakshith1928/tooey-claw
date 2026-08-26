@@ -6,13 +6,15 @@
   "scripts": {
     "dev": "bun run daemon/src/index.ts",
     "check": "bun run daemon/src/index.ts --check",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@opencode-ai/client": "0.0.0-beta-18286",
     "@opencode-ai/plugin": "0.0.0-beta-18286"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.0"
+    "@types/bun": "^1.2.0",
+    "typescript": "^7.0.2"
   }
 }
