@@ -17,9 +17,10 @@
       (agents query at parent directory returned no claw/worker)
 - [x] Agent frontmatter fields verified against V2 docs; deviations noted in the PR/ticket comments
       (V2 agents guide fetched and followed: `.opencode/agents/<name>.md`, fields description/mode/steps/
-      color/permissions, body becomes system. Notes: (1) markdown files at a stale-snapshot location were
-      not picked up, so agents are ALSO verified via the equivalent config form during debugging — both
-      mechanisms proven to work on clean discovery; final repo uses markdown files + minimal config.
+      color/permissions, body becomes system. Notes: (1) An interim "markdown not picked up" diagnosis was
+      WRONG — the shared service had snapshotted the folder before files existed and ignored all new content,
+      including explicit config entries. Fresh-location tests proved markdown agents load correctly on clean
+      discovery; the interim fat-config workaround was removed. Final repo uses markdown files + minimal config.
       (2) Plugin auto-discovery from `.opencode/plugins/` confirmed working without a config entry.
       (3) Beta API deviation found: session.create expects `model:{providerID,id}` not `modelID`;
       mapped inside the adapter (firewall), port unchanged.)
