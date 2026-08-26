@@ -7,6 +7,7 @@
  */
 import { OpenCode } from "@opencode-ai/client"
 import { Service } from "@opencode-ai/client/service"
+import { canonical } from "./paths"
 import type {
   AgentSummary,
   ClawEvent,
@@ -39,6 +40,15 @@ function toArray<T>(value: T[] | { items?: T[] } | undefined): T[] {
   return []
 }
 
+function toLocationDir(p: string): string {
+  // Centralized canonicalization for every Location.Ref (symlinks, bind mounts, case).
+  try {
+    return canonical(p)
+  } catch {
+    return p
+  }
+}
+
 export async function connectOpenCode(options: ConnectOptions = {}): Promise<ClawOpenCodePort> {
   let baseUrl: string
   let headers: Record<string, string>
@@ -48,13 +58,27 @@ export async function connectOpenCode(options: ConnectOptions = {}): Promise<Cla
     headers = options.token ? { authorization: `Bearer ${options.token}` } : {}
   } else {
     // Discovers a healthy registered service or starts one (opencode serve --service).
-    // Command and version-predicate are overridden because this machine ships the
-    // CLI as `opencode2` with a beta version string; defaults would misfire.
-    const bin = process.env.CLAW_OPENCODE_BIN ?? "opencode2"
-    const endpoint = await Service.ensure({
-      command: [bin, "serve", "--service"],
-      version: () => true,
-    })
+    // Try stable binary first, then beta channel; use a real compatibility predicate.
+    const envBin = process.env.CLAW_OPENCODE_BIN
+    const candidates = envBin ? [envBin] : ["opencode", "opencode2"]
+    const isCompatible = (v: string) => v.startsWith("0.") || v.startsWith("2.")
+    let lastError: unknown
+    let endpoint: Awaited<ReturnType<typeof Service.ensure>> | undefined
+    for (const bin of candidates) {
+      try {
+        endpoint = await Service.ensure({
+          command: [bin, "serve", "--service"],
+          version: isCompatible,
+          onStart(reason, previousVersion) {
+            console.log(`[claw] OpenCode service ${reason} (previous: ${previousVersion ?? "none"}) via ${bin}`)
+          },
+        })
+        break
+      } catch (e) {
+        lastError = e
+      }
+    }
+    if (!endpoint) throw lastError ?? new Error("could not start OpenCode service (tried: " + candidates.join(", ") + ")")
     baseUrl = endpoint.url
     headers = Service.headers(endpoint) as Record<string, string>
   }
@@ -72,7 +96,7 @@ export async function connectOpenCode(options: ConnectOptions = {}): Promise<Cla
     },
 
     async agents(directory?: string): Promise<AgentSummary[]> {
-      const input = directory ? { location: { directory } } : undefined
+      const input = directory ? { location: { directory: toLocationDir(directory) } } : undefined
       const raw = toArray(await client.agent.list(input))
       return raw.map((a) => {
         const rec = a as Record<string, unknown>
@@ -90,7 +114,7 @@ export async function connectOpenCode(options: ConnectOptions = {}): Promise<Cla
       const fn = anyClient.plugin?.list
       if (typeof fn !== "function") return undefined // endpoint absent in this beta
       try {
-        const raw = toArray(await fn.call(anyClient.plugin, { location: { directory } }))
+        const raw = toArray(await fn.call(anyClient.plugin, { location: { directory: toLocationDir(directory) } }))
         return raw.map((p) => {
           const rec = p as Record<string, unknown>
           return {
@@ -111,7 +135,7 @@ export async function connectOpenCode(options: ConnectOptions = {}): Promise<Cla
         : undefined
       const created = unwrap(
         await client.session.create({
-          location: { directory: input.directory },
+          location: { directory: toLocationDir(input.directory) },
           ...(input.title ? { title: input.title } : {}),
           ...(model ? { model } : {}),
         }),

@@ -7,7 +7,9 @@
  *   CLAW_PROBE=1 bun run dev → live probe: real session, real plugin tool call
  */
 import { connectOpenCode } from "./opencode"
-import { CLAW_ROOT, ensureDataDir } from "./paths"
+import { canonical, CLAW_ROOT, ensureDataDir } from "./paths"
+import { existsSync } from "node:fs"
+import path from "node:path"
 
 const CLAW_DIR = CLAW_ROOT
 
@@ -33,9 +35,8 @@ async function main() {
   console.log(`[claw] root: ${CLAW_DIR}`)
 
   // ── Free checks: no sessions, no model calls ──────────────────────────────
-  if (!CLAW_DIR || !CLAW_DIR.includes("claw")) {
-    // Soft guard; informational only.
-    console.warn("[claw] warning: unexpected project root")
+  if (!existsSync(path.join(CLAW_DIR, ".opencode")) || !existsSync(path.join(CLAW_DIR, "opencode.json"))) {
+    console.warn(`[claw] warning: ${CLAW_DIR} lacks .opencode/ or opencode.json — is CLAW_ROOT correct?`)
   }
 
   const port = await connectOpenCode()
@@ -52,20 +53,28 @@ async function main() {
   const agentsInClaw = await port.agents(CLAW_DIR)
   const ids = new Set(agentsInClaw.map((a) => a.id))
   for (const required of ["claw", "worker"]) {
-    if (!ids.has(required)) fail(`agent '${required}' not visible in the Claw location`)
+    if (!ids.has(required)) {
+      const hint =
+        `agent '${required}' not visible in the Claw location (${CLAW_DIR}). ` +
+        `If this is a fresh clone or you just added .opencode/ content, run: ` +
+        `opencode service restart (or opencode2 service restart on beta) and retry.`
+      fail(hint)
+    }
   }
   console.log(
     `✓ agents visible in Claw location: ${agentsInClaw.map((a) => a.id).sort().join(", ")}`,
   )
 
-  const outside = await port.agents(process.cwd() === CLAW_DIR ? CLAW_DIR + "/." : process.cwd())
+  // Isolation: query an outside directory (canonicalized) — never string-compare raw paths.
+  const outsideDirRaw = canonical(process.cwd()) === canonical(CLAW_DIR) ? path.dirname(CLAW_DIR) : process.cwd()
+  const outside = await port.agents(outsideDirRaw)
   const clawLeak = outside.filter((a) => a.id === "claw" || a.id === "worker")
   if (clawLeak.length > 0) {
     console.warn(
-      `[claw] isolation warning: claw/worker visible at ${process.cwd()} — expected only inside ${CLAW_DIR}`,
+      `[claw] isolation warning: claw/worker visible at ${outsideDirRaw} (canonical ${canonical(outsideDirRaw)}) — expected only inside ${CLAW_DIR}`,
     )
   } else {
-    console.log(`✓ isolation: no claw agents visible at ${process.cwd()}`)
+    console.log(`✓ isolation: no claw agents visible at ${outsideDirRaw}`)
   }
 
   // ── Plugin registration (free) + optional live probe (costs a model call) ─

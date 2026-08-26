@@ -2,27 +2,64 @@
  * Path resolution — strict project-local isolation (SPEC decision 3).
  * Every durable artifact lives under the Claw root; global config is never touched.
  */
-import { mkdirSync } from "node:fs"
-import { existsSync } from "node:fs"
+import { mkdirSync, existsSync, readFileSync, realpathSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-/** Walk up from a start dir until a directory containing package.json is found. */
-function findRoot(start: string): string {
-  let dir = path.resolve(start)
-  while (true) {
-    if (existsSync(path.join(dir, "package.json"))) return dir
-    const parent = path.dirname(dir)
-    if (parent === dir) throw new Error(`Could not locate Claw root above ${start}`)
-    dir = parent
+/** Return canonical absolute path (resolves symlinks / Docker bind mounts). */
+export function canonical(p: string): string {
+  try {
+    return realpathSync(path.resolve(p))
+  } catch {
+    return path.resolve(p)
   }
+}
+
+function isClawRoot(dir: string): boolean {
+  if (!existsSync(path.join(dir, "package.json"))) return false
+  if (existsSync(path.join(dir, ".opencode"))) return true
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"))
+    return pkg.name === "claw"
+  } catch {
+    return false
+  }
+}
+
+/** Walk up from start dirs until a Claw root is found. */
+function findRoot(start: string): string {
+  const bases = [start, process.cwd()]
+  for (const base of bases) {
+    let dir = path.resolve(base)
+    while (true) {
+      if (isClawRoot(dir)) return dir
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  }
+  // Fallback: any package.json (covers compiled binary / renamed installs)
+  for (const base of bases) {
+    let dir = path.resolve(base)
+    while (true) {
+      if (existsSync(path.join(dir, "package.json"))) return dir
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  }
+  throw new Error(`Could not locate Claw root above ${start} or cwd ${process.cwd()}`)
 }
 
 // daemon/src/paths.ts → root is three levels up from this file's directory.
 const here = path.dirname(fileURLToPath(import.meta.url))
-export const CLAW_ROOT = process.env.CLAW_ROOT ? path.resolve(process.env.CLAW_ROOT) : findRoot(here)
+export const CLAW_ROOT = canonical(
+  process.env.CLAW_ROOT ? process.env.CLAW_ROOT : findRoot(here),
+)
 
-export const DATA_DIR = path.join(CLAW_ROOT, "data")
+export const DATA_DIR = process.env.CLAW_DATA_DIR
+  ? path.resolve(process.env.CLAW_DATA_DIR)
+  : path.join(CLAW_ROOT, "data")
 export const DB_PATH = path.join(DATA_DIR, "claw.db")
 export const KILL_SWITCH_PATH = path.join(DATA_DIR, "kill")
 
