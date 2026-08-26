@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test"
 import path from "node:path"
 import { existsSync } from "node:fs"
-import { canonical, ensureDataDir, DATA_DIR, CLAW_ROOT, resolveDataDir, isClawRoot } from "./paths"
+import { canonical, ensureDataDir, DATA_DIR, CLAW_ROOT, resolveDataDir, isClawRoot } from "../src/paths"
 
 describe("paths — canonical", () => {
   it("resolves a relative path to an absolute path", () => {

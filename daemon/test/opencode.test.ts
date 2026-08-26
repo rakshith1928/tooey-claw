@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test"
 import path from "node:path"
-import { isCompatibleVersion, toLocationDir, resolveCandidates } from "./opencode"
+import { isCompatibleVersion, toLocationDir, resolveCandidates } from "../src/opencode"
 
 describe("opencode — isCompatibleVersion", () => {
   it("accepts 0.x beta versions", () => {
@@ -52,7 +52,7 @@ describe("opencode — resolveCandidates", () => {
 
 describe("opencode — toWireModel", () => {
   it("maps ModelRef {providerID, modelID} to wire {providerID, id}", async () => {
-    const { toWireModel } = await import("./opencode")
+    const { toWireModel } = await import("../src/opencode")
     expect(toWireModel({ providerID: "anthropic", modelID: "claude-sonnet-4-5" })).toEqual({
       providerID: "anthropic",
       id: "claude-sonnet-4-5",
@@ -60,7 +60,7 @@ describe("opencode — toWireModel", () => {
   })
 
   it("returns undefined for undefined input", async () => {
-    const { toWireModel } = await import("./opencode")
+    const { toWireModel } = await import("../src/opencode")
     expect(toWireModel(undefined)).toBeUndefined()
   })
 })
