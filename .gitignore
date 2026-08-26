@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# claw runtime data (never commit state or secrets)
+data/
+.env
+.env.*
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# os noise
+Thumbs.db
+.DS_Store

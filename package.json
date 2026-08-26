@@ -1,0 +1,18 @@
+{
+  "name": "claw",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run daemon/src/index.ts",
+    "check": "bun run daemon/src/index.ts --check",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@opencode-ai/client": "beta",
+    "@opencode-ai/plugin": "beta"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0"
+  }
+}
