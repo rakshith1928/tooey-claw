@@ -2,13 +2,18 @@
  * Claw daemon entry point.
  *
  * Modes:
- *   bun run dev            → normal run (scheduler lands in ticket 02)
+ *   bun run dev            → run mode: boot checks, then the scheduler loop (ticket 02)
  *   bun run check          → free infrastructure checks, no session/model calls
  *   CLAW_PROBE=1 bun run dev → live probe: real session, real plugin tool call
  */
 import { connectOpenCode } from "./opencode"
 import { findClawAgentLeak, findMissingAgents, hasPlugin } from "./checks"
-import { canonical, CLAW_ROOT, ensureDataDir } from "./paths"
+import { loadConfig } from "./config"
+import { openClawDb } from "./db"
+import { canonical, DB_PATH, KILL_SWITCH_PATH, CLAW_ROOT, ensureDataDir } from "./paths"
+import { SystemClock } from "./clock"
+import { createScheduler } from "./scheduler"
+import type { ClawOpenCodePort } from "./ports"
 import { existsSync } from "node:fs"
 import path from "node:path"
 
@@ -26,6 +31,41 @@ function describe(error: unknown): string {
 function fail(message: string): never {
   console.error(`✗ ${message}`)
   process.exit(1)
+}
+
+/**
+ * Run mode (ticket 02): the scheduler loop over the project-local config.
+ * Ctrl-C (or SIGTERM) stops the loop cleanly; the DB claim/lock discipline
+ * means a hard kill is also recoverable (duplicates are prevented by
+ * last_dispatched_at, verified in scheduler tests).
+ */
+async function runSchedulerLoop(port: ClawOpenCodePort): Promise<void> {
+  const config = loadConfig(CLAW_DIR)
+  const db = openClawDb(DB_PATH)
+  const scheduler = createScheduler({
+    clock: SystemClock,
+    port,
+    db,
+    config,
+    clawRoot: CLAW_DIR,
+    killSwitchPath: KILL_SWITCH_PATH,
+  })
+
+  const shutdown = () => {
+    console.log("[claw] stopping scheduler…")
+    scheduler.stop()
+  }
+  process.once("SIGINT", shutdown)
+  process.once("SIGTERM", shutdown)
+
+  console.log(
+    `[claw] scheduler running: ${config.schedules.length} schedule(s), ` +
+      `tick ${Math.round(config.tickMs / 1000)}s, db ${DB_PATH}`,
+  )
+  console.log(`[claw] kill switch: create ${KILL_SWITCH_PATH} to halt dispatch (Ctrl-C stops the daemon)`)
+  await scheduler.runLoop()
+  db.close()
+  console.log("[claw] scheduler stopped")
 }
 
 async function main() {
@@ -105,7 +145,7 @@ async function main() {
   if (checkOnly) return
 
   if (!probe) {
-    console.log("✓ boot checks complete (scheduler arrives with ticket 02)")
+    await runSchedulerLoop(port)
     return
   }
 

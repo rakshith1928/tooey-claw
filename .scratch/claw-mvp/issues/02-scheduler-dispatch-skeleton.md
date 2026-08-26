@@ -4,11 +4,11 @@
 
 **Blocked by:** 01 (Boot & wiring).
 
-**Status:** ready-for-agent
+**Status:** done (2026-08-26) — 62-test suite green (35 new: config/db/scheduler), tsc clean, live-fire demo verified: real session dispatched once, task row `running` with sessionID, `last_dispatched_at` claimed, `data/kill` halted dispatch within one tick and removal resumed.
 
-- [ ] Fake-clock test: due schedule dispatches exactly once; a subsequent tick does not duplicate
-- [ ] Task row transitions to running before the prompt is dispatched
-- [ ] A not-yet-due schedule does not fire
-- [ ] Single-flight lock blocks a second concurrent run of the loop (tested)
-- [ ] Kill-switch file present → next tick performs no dispatch (tested); removing it resumes
-- [ ] Manual live demo: one real schedule fires once against the local service
+- [x] Fake-clock test: due schedule dispatches exactly once; a subsequent tick does not duplicate
+- [x] Task row transitions to running before the prompt is dispatched
+- [x] A not-yet-due schedule does not fire
+- [x] Single-flight lock blocks a second concurrent run of the loop (tested)
+- [x] Kill-switch file present → next tick performs no dispatch (tested); removing it resumes
+- [x] Manual live demo: one real schedule fires once against the local service

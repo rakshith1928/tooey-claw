@@ -1,0 +1,15 @@
+{
+  "$comment": "Copy to claw.json at the Claw root and edit. claw.json is gitignored (it names your private repos).",
+  "tickSeconds": 60,
+  "model": "tokenrouter/qwen/qwen3.8-max-free",
+  "schedules": [
+    {
+      "id": "watchdog-claw",
+      "name": "Watch Claw repo",
+      "repo": "C:\\Users\\DELL\\claw",
+      "cadence": "every:6h",
+      "prompt": "Watchdog run for this repository. Check for: new/updated issues, new/updated PRs, CI failures, and commits since the timestamp recorded in the last verdict memory. Delegate inspection to worker sub-tasks, then save a compact verdict with memory_save including a pointer (timestamp/commit) the next run needs.",
+      "enabled": true
+    }
+  ]
+}

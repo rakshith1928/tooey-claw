@@ -20,6 +20,7 @@ read or modified.
 
 ```
 opencode.json            # project config (default_agent)
+claw.example.json        # scheduler config template → copy to claw.json (gitignored)
 .opencode/
   agents/claw.md         # orchestrator agent definition
   agents/worker.md       # worker agent definition
@@ -28,7 +29,13 @@ daemon/src/
   ports.ts               # THE seam: ClawOpenCodePort + Clock interfaces
   opencode.ts            # only file allowed to know @opencode-ai/* (beta firewall)
   paths.ts               # project-local path resolution
-  index.ts               # boot checks + live probe
+  config.ts              # claw.json parsing (schedules, cadences, dispatch model)
+  db.ts                  # SQLite (bun:sqlite, WAL): tasks + schedules
+  clock.ts               # SystemClock — the only real-wall-time implementation
+  scheduler.ts           # tick loop: kill switch, due check, claim, dispatch
+  checks.ts              # pure boot-acceptance predicates
+  index.ts               # entry: boot checks → probe mode or scheduler run mode
+daemon/test/             # unit tests (fake clock / recording fake port / temp SQLite)
 docs/SPEC.md             # spec
 .scratch/claw-mvp/       # tickets
 ```
@@ -54,10 +61,21 @@ $env:CLAW_PROBE_MODEL = "tokenrouter/qwen/qwen3.8-max-free"   # example
 bun run dev
 ```
 
+Scheduler run mode (ticket 02): copy the config template, edit schedules/repos, run the daemon.
+It boots through the same checks, then ticks: due schedules dispatch once into a `claw`
+session, with a durable task row and the kill switch (`data/kill`) honored every tick.
+
+```sh
+cp claw.example.json claw.json   # gitignored — names your private repos
+bun run dev                       # Ctrl-C stops; data/kill halts dispatch without stopping
+bun test                          # 62 tests at the approved seams (no network/model calls)
+bun run typecheck
+```
+
 ## Status
 
 - [x] Ticket 01 — boot & wiring (agents load, plugin active, live probe green)
-- [ ] Ticket 02 — scheduler & dispatch skeleton
+- [x] Ticket 02 — scheduler & dispatch skeleton (fake-clock tests, live demo fired once)
 - [ ] Ticket 03 — completion detection & crash recovery
 - [ ] Ticket 04 — delegation path
 - [ ] Ticket 05 — watchdog end-to-end

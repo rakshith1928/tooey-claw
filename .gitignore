@@ -3,6 +3,7 @@ node_modules/
 
 # claw runtime data (never commit state or secrets)
 data/
+claw.json
 .env
 .env.*
 *.db
