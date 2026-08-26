@@ -154,7 +154,7 @@ describe("scheduler — session shape", () => {
 
   it("passes the configured dispatch model so unattended runs pin their model", async () => {
     const cfg = parseConfig({
-      model: "tokenrouter/qwen/qwen3.8-max-free",
+      model: "openrouter/openrouter/free",
       schedules: [{ id: "m", repo: "C:\\r", cadence: "every:1m", prompt: "p" }],
     })
     await scheduler(cfg).tick()
@@ -162,7 +162,7 @@ describe("scheduler — session shape", () => {
       directory: "C:\\claw",
       agent: "claw",
       title: "scheduled: m",
-      model: { providerID: "tokenrouter", modelID: "qwen/qwen3.8-max-free" },
+      model: { providerID: "openrouter", modelID: "openrouter/free" },
     })
   })
 })

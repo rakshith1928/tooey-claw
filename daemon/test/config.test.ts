@@ -64,11 +64,11 @@ describe("config — parseConfig", () => {
     expect(() => parseConfig([])).toThrow(/config/)
   })
 
-  it("parses optional top-level dispatch model 'provider/model'", () => {
-    const withModel = parseConfig({ ...valid, model: "tokenrouter/qwen/qwen3.8-max-free" })
+  it("parses optional top-level dispatch model 'provider/model' (model may contain slashes)", () => {
+    const withModel = parseConfig({ ...valid, model: "openrouter/openrouter/free" })
     expect(withModel.model).toEqual({
-      providerID: "tokenrouter",
-      modelID: "qwen/qwen3.8-max-free",
+      providerID: "openrouter",
+      modelID: "openrouter/free",
     })
     expect(parseConfig(valid).model).toBeUndefined()
     expect(() => parseConfig({ ...valid, model: "nope" })).toThrow(/provider\/model/)

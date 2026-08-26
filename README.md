@@ -57,7 +57,7 @@ Live probe (real session, real model call, invokes the plugin tool):
 ```sh
 # CLAW_PROBE_MODEL="provider/model" pins the model (recommended: use a cheap/free one)
 $env:CLAW_PROBE = "1"
-$env:CLAW_PROBE_MODEL = "tokenrouter/qwen/qwen3.8-max-free"   # example
+$env:CLAW_PROBE_MODEL = "openrouter/openrouter/free"   # example
 bun run dev
 ```
 
