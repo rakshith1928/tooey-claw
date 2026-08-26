@@ -6,7 +6,7 @@
     {
       "id": "watchdog-claw",
       "name": "Watch Claw repo",
-      "repo": "C:\\Users\\DELL\\claw",
+      "repo": "C:\\path\\to\\your\\repo",
       "cadence": "every:6h",
       "prompt": "Watchdog run for this repository. Check for: new/updated issues, new/updated PRs, CI failures, and commits since the timestamp recorded in the last verdict memory. Delegate inspection to worker sub-tasks, then save a compact verdict with memory_save including a pointer (timestamp/commit) the next run needs.",
       "enabled": true

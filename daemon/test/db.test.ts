@@ -65,7 +65,21 @@ describe("db — task lifecycle", () => {
     expect(failed?.error).toBe("boom")
   })
 
-  it("rejects finishing a queued task as done out of order? no — allows, but status stays in domain", () => {
+  it("finishTask without a new result PRESERVES the session pointer in result_json", () => {
+    const t = db.createTask({ type: "watchdog", payload: {} }, 1)
+    db.setTaskSession(t.id, "ses_42")
+    const failed = db.finishTask(t.id, "failed", { error: "boom" }, 5)
+    expect(failed?.error).toBe("boom")
+    expect(failed?.result).toEqual({ sessionID: "ses_42" }) // not wiped
+  })
+
+  it("setTaskSession records the session on the row", () => {
+    const t = db.createTask({ type: "watchdog", payload: {} }, 1)
+    db.setTaskSession(t.id, "ses_7")
+    expect(db.getTask(t.id)?.result).toEqual({ sessionID: "ses_7" })
+  })
+
+  it("finishTask allows done directly from queued and rejects non-terminal statuses", () => {
     const t = db.createTask({ type: "watchdog", payload: {} }, 1)
     const done = db.finishTask(t.id, "done", {}, 9)
     expect(done?.status).toBe("done")

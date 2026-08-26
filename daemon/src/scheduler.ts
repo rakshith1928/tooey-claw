@@ -44,8 +44,6 @@ export interface Scheduler {
   stop(): void
 }
 
-const IDLE: TickResult = { killed: false, skipped: false, dispatched: [] }
-
 function isDue(lastDispatchedAt: number | null, cadenceMs: number, now: number): boolean {
   return lastDispatchedAt === null || now - lastDispatchedAt >= cadenceMs
 }

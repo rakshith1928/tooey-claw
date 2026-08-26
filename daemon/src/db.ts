@@ -128,7 +128,9 @@ export function openClawDb(filePath: string): ClawDb {
        WHERE id = ? AND status = 'queued'`,
     ),
     finishTask: db.query(
-      `UPDATE tasks SET status = ?, error = ?, result_json = ?, finished_at = ?
+      // COALESCE: a finish without a new result preserves what is already on
+      // the row (e.g. the session pointer recorded by setTaskSession).
+      `UPDATE tasks SET status = ?, error = ?, result_json = COALESCE(?, result_json), finished_at = ?
        WHERE id = ? AND status IN ('queued','running')`,
     ),
     upsertSchedule: db.query(

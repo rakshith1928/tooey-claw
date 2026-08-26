@@ -17,8 +17,6 @@ import type { ClawOpenCodePort } from "./ports"
 import { existsSync } from "node:fs"
 import path from "node:path"
 
-const CLAW_DIR = CLAW_ROOT
-
 function describe(error: unknown): string {
   if (error instanceof Error) return error.stack ?? error.message
   try {
@@ -35,19 +33,19 @@ function fail(message: string): never {
 
 /**
  * Run mode (ticket 02): the scheduler loop over the project-local config.
- * Ctrl-C (or SIGTERM) stops the loop cleanly; the DB claim/lock discipline
- * means a hard kill is also recoverable (duplicates are prevented by
- * last_dispatched_at, verified in scheduler tests).
+ * Ctrl-C (or SIGTERM) stops the loop cleanly. A hard kill is duplicate-safe
+ * (last_dispatched_at claim, verified in scheduler tests); reconciling
+ * orphaned running tasks is explicitly ticket 03's scope, not this ticket's.
  */
 async function runSchedulerLoop(port: ClawOpenCodePort): Promise<void> {
-  const config = loadConfig(CLAW_DIR)
+  const config = loadConfig(CLAW_ROOT)
   const db = openClawDb(DB_PATH)
   const scheduler = createScheduler({
     clock: SystemClock,
     port,
     db,
     config,
-    clawRoot: CLAW_DIR,
+    clawRoot: CLAW_ROOT,
     killSwitchPath: KILL_SWITCH_PATH,
   })
 
@@ -73,11 +71,11 @@ async function main() {
   const probe = process.env.CLAW_PROBE === "1"
   ensureDataDir()
 
-  console.log(`[claw] root: ${CLAW_DIR}`)
+  console.log(`[claw] root: ${CLAW_ROOT}`)
 
   // ── Free checks: no sessions, no model calls ──────────────────────────────
-  if (!existsSync(path.join(CLAW_DIR, ".opencode")) || !existsSync(path.join(CLAW_DIR, "opencode.json"))) {
-    console.warn(`[claw] warning: ${CLAW_DIR} lacks .opencode/ or opencode.json — is CLAW_ROOT correct?`)
+  if (!existsSync(path.join(CLAW_ROOT, ".opencode")) || !existsSync(path.join(CLAW_ROOT, "opencode.json"))) {
+    console.warn(`[claw] warning: ${CLAW_ROOT} lacks .opencode/ or opencode.json — is CLAW_ROOT correct?`)
   }
 
   const port = await connectOpenCode()
@@ -95,11 +93,11 @@ async function main() {
   // outside the root sees neither Claw agents nor the claw-core plugin.
   // Leaks are hard failures: isolation is an acceptance criterion, not advice.
   const requiredAgents = ["claw", "worker"] as const
-  const agentsInClaw = await port.agents(CLAW_DIR)
+  const agentsInClaw = await port.agents(CLAW_ROOT)
   const missing = findMissingAgents(requiredAgents, agentsInClaw)
   if (missing.length > 0) {
     fail(
-      `agent(s) [${missing.join(", ")}] not visible in the Claw location (${CLAW_DIR}). ` +
+      `agent(s) [${missing.join(", ")}] not visible in the Claw location (${CLAW_ROOT}). ` +
         `If this is a fresh clone or you just added .opencode/ content, run: ` +
         `opencode service restart (or opencode2 service restart on beta) and retry.`,
     )
@@ -110,13 +108,13 @@ async function main() {
 
   // Isolation: query a directory definitely outside the Claw project (parent dir).
   // Using cwd is fragile when cwd itself is another Claw checkout (e.g., CLAW_ROOT override).
-  const outsideDirRaw = path.dirname(CLAW_DIR)
+  const outsideDirRaw = path.dirname(CLAW_ROOT)
   const outsideAgents = await port.agents(outsideDirRaw)
   const agentLeak = findClawAgentLeak(outsideAgents)
   if (agentLeak.length > 0) {
     fail(
       `isolation violated: agent(s) [${agentLeak.map((a) => a.id).join(", ")}] visible at ` +
-        `${outsideDirRaw} (canonical ${canonical(outsideDirRaw)}) — expected only inside ${CLAW_DIR}`,
+        `${outsideDirRaw} (canonical ${canonical(outsideDirRaw)}) — expected only inside ${CLAW_ROOT}`,
     )
   }
   const outsidePlugins = await port.plugins(outsideDirRaw)
@@ -125,13 +123,13 @@ async function main() {
   } else if (hasPlugin(outsidePlugins, "claw-core")) {
     fail(
       `isolation violated: claw-core plugin loaded at ${outsideDirRaw} ` +
-        `(canonical ${canonical(outsideDirRaw)}) — expected only inside ${CLAW_DIR}`,
+        `(canonical ${canonical(outsideDirRaw)}) — expected only inside ${CLAW_ROOT}`,
     )
   }
-  console.log(`✓ isolation: no claw agents or claw-core plugin at ${outsideDirRaw} (parent of ${CLAW_DIR})`)
+  console.log(`✓ isolation: no claw agents or claw-core plugin at ${outsideDirRaw} (parent of ${CLAW_ROOT})`)
 
   // ── Plugin registration (free) + optional live probe (costs a model call) ─
-  const plugins = await port.plugins(CLAW_DIR)
+  const plugins = await port.plugins(CLAW_ROOT)
   if (plugins === undefined) {
     console.warn("[claw] plugin listing unavailable in this client/server build — skipping")
   } else {
@@ -162,7 +160,7 @@ async function main() {
 
   console.log("[claw] probe: creating session and invoking claw_probe…")
   const { sessionID } = await port.createSession({
-    directory: CLAW_DIR,
+    directory: CLAW_ROOT,
     agent: "claw",
     title: "claw-core probe",
     ...(modelRef ? { model: modelRef } : {}),
