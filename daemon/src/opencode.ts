@@ -40,13 +40,25 @@ function toArray<T>(value: T[] | { items?: T[] } | undefined): T[] {
   return []
 }
 
-function toLocationDir(p: string): string {
+export function isCompatibleVersion(v: string): boolean {
+  return v.startsWith("0.") || v.startsWith("2.")
+}
+
+export function toLocationDir(p: string): string {
   // Centralized canonicalization for every Location.Ref (symlinks, bind mounts, case).
   try {
     return canonical(p)
   } catch {
     return p
   }
+}
+
+export function resolveCandidates(envBin: string | undefined): string[] {
+  return envBin ? [envBin] : ["opencode", "opencode2"]
+}
+
+export function toWireModel(model: { providerID: string; modelID: string } | undefined) {
+  return model ? { providerID: model.providerID, id: model.modelID } : undefined
 }
 
 export async function connectOpenCode(options: ConnectOptions = {}): Promise<ClawOpenCodePort> {
@@ -60,8 +72,8 @@ export async function connectOpenCode(options: ConnectOptions = {}): Promise<Cla
     // Discovers a healthy registered service or starts one (opencode serve --service).
     // Try stable binary first, then beta channel; use a real compatibility predicate.
     const envBin = process.env.CLAW_OPENCODE_BIN
-    const candidates = envBin ? [envBin] : ["opencode", "opencode2"]
-    const isCompatible = (v: string) => v.startsWith("0.") || v.startsWith("2.")
+    const candidates = resolveCandidates(envBin)
+    const isCompatible = isCompatibleVersion
     let lastError: unknown
     let endpoint: Awaited<ReturnType<typeof Service.ensure>> | undefined
     for (const bin of candidates) {
@@ -130,9 +142,7 @@ export async function connectOpenCode(options: ConnectOptions = {}): Promise<Cla
     async createSession(input: CreateSessionInput) {
       // Wire note (verified against live server): session.create expects
       // model as { providerID, id }; other endpoints/schemas use `modelID`.
-      const model = input.model
-        ? { providerID: input.model.providerID, id: input.model.modelID }
-        : undefined
+      const model = toWireModel(input.model)
       const created = unwrap(
         await client.session.create({
           location: { directory: toLocationDir(input.directory) },

@@ -65,8 +65,9 @@ async function main() {
     `✓ agents visible in Claw location: ${agentsInClaw.map((a) => a.id).sort().join(", ")}`,
   )
 
-  // Isolation: query an outside directory (canonicalized) — never string-compare raw paths.
-  const outsideDirRaw = canonical(process.cwd()) === canonical(CLAW_DIR) ? path.dirname(CLAW_DIR) : process.cwd()
+  // Isolation: query a directory definitely outside the Claw project (parent dir).
+  // Using cwd is fragile when cwd itself is another Claw checkout (e.g., CLAW_ROOT override).
+  const outsideDirRaw = path.dirname(CLAW_DIR)
   const outside = await port.agents(outsideDirRaw)
   const clawLeak = outside.filter((a) => a.id === "claw" || a.id === "worker")
   if (clawLeak.length > 0) {
@@ -74,7 +75,7 @@ async function main() {
       `[claw] isolation warning: claw/worker visible at ${outsideDirRaw} (canonical ${canonical(outsideDirRaw)}) — expected only inside ${CLAW_DIR}`,
     )
   } else {
-    console.log(`✓ isolation: no claw agents visible at ${outsideDirRaw}`)
+    console.log(`✓ isolation: no claw agents visible at ${outsideDirRaw} (parent of ${CLAW_DIR})`)
   }
 
   // ── Plugin registration (free) + optional live probe (costs a model call) ─

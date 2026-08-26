@@ -15,7 +15,11 @@ export function canonical(p: string): string {
   }
 }
 
-function isClawRoot(dir: string): boolean {
+export function resolveDataDir(clawRoot: string, envValue: string | undefined): string {
+  return envValue ? path.resolve(envValue) : path.join(clawRoot, "data")
+}
+
+export function isClawRoot(dir: string): boolean {
   if (!existsSync(path.join(dir, "package.json"))) return false
   if (existsSync(path.join(dir, ".opencode"))) return true
   try {
@@ -57,9 +61,7 @@ export const CLAW_ROOT = canonical(
   process.env.CLAW_ROOT ? process.env.CLAW_ROOT : findRoot(here),
 )
 
-export const DATA_DIR = process.env.CLAW_DATA_DIR
-  ? path.resolve(process.env.CLAW_DATA_DIR)
-  : path.join(CLAW_ROOT, "data")
+export const DATA_DIR = resolveDataDir(CLAW_ROOT, process.env.CLAW_DATA_DIR)
 export const DB_PATH = path.join(DATA_DIR, "claw.db")
 export const KILL_SWITCH_PATH = path.join(DATA_DIR, "kill")
 
