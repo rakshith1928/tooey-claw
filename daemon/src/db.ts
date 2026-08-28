@@ -77,6 +77,8 @@ export interface ClawDb {
   /** The running task whose dispatched session is `sessionID`, if any. */
   findRunningBySession(sessionID: string): Task | null
   listRunning(): Task[]
+  /** Newest-first task listing for the task tools; filters optional, limit clamped 1..200. */
+  listTasks(opts?: { status?: string; type?: string; limit?: number }): Task[]
   /** Most recent done task for a schedule id (source of the next-run pointer). */
   lastDoneFor(scheduleId: string): Task | null
   markTaskRunning(id: string, now: number): Task | null
@@ -139,6 +141,12 @@ export function openClawDb(filePath: string): ClawDb {
        WHERE status = 'done' AND json_extract(payload_json, '$.scheduleId') = ?
        ORDER BY finished_at DESC LIMIT 1`,
     ),
+    listTasksAll: db.query("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?"),
+    listTasksStatus: db.query("SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?"),
+    listTasksType: db.query("SELECT * FROM tasks WHERE type = ? ORDER BY created_at DESC LIMIT ?"),
+    listTasksStatusType: db.query(
+      "SELECT * FROM tasks WHERE status = ? AND type = ? ORDER BY created_at DESC LIMIT ?",
+    ),
     runTask: db.query(
       `UPDATE tasks SET status = 'running', started_at = ?
        WHERE id = ? AND status = 'queued'`,
@@ -189,6 +197,19 @@ export function openClawDb(filePath: string): ClawDb {
 
     listRunning() {
       return (stmt.listRunning.all() as TaskRow[]).map(toTask)
+    },
+
+    listTasks(opts = {}) {
+      const limit = Math.max(1, Math.min(200, Math.trunc(opts.limit ?? 50) || 50))
+      const rows =
+        opts.status && opts.type
+          ? (stmt.listTasksStatusType.all(opts.status, opts.type, limit) as TaskRow[])
+          : opts.status
+            ? (stmt.listTasksStatus.all(opts.status, limit) as TaskRow[])
+            : opts.type
+              ? (stmt.listTasksType.all(opts.type, limit) as TaskRow[])
+              : (stmt.listTasksAll.all(limit) as TaskRow[])
+      return rows.map(toTask)
     },
 
     lastDoneFor(scheduleId) {

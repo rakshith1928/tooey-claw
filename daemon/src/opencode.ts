@@ -64,6 +64,93 @@ export function toWireModel(model: { providerID: string; modelID: string } | und
   return model ? { providerID: model.providerID, id: model.modelID } : undefined
 }
 
+/**
+ * The session-control slice of the beta client's session API, duck-typed.
+ * Both the external client (client.session) and the in-server plugin
+ * context (ctx.session) satisfy this shape — one firewall adapter serves both.
+ */
+export interface SessionApiLike {
+  create(input?: Record<string, unknown>): Promise<unknown>
+  switchAgent(input: Record<string, unknown>): Promise<unknown>
+  prompt(input: Record<string, unknown>): Promise<unknown>
+  wait(input: Record<string, unknown>): Promise<unknown>
+  interrupt(input: Record<string, unknown>): Promise<unknown>
+  context?(input: Record<string, unknown>): Promise<unknown>
+  messages?(input: Record<string, unknown>): Promise<unknown>
+}
+
+export type SessionControl = Pick<
+  ClawOpenCodePort,
+  "createSession" | "prompt" | "wait" | "interrupt" | "transcript"
+>
+
+/**
+ * Firewall adapter (SPEC decision 2): normalizes the beta session wire shape
+ * for BOTH the daemon's HTTP client and the plugin's in-process ctx.session.
+ * Beta drift lands here and nowhere else.
+ */
+export function sessionControl(session: SessionApiLike): SessionControl {
+  return {
+    async createSession(input: CreateSessionInput) {
+      // Wire note (verified against live server): session.create expects
+      // model as { providerID, id }; other endpoints/schemas use `modelID`.
+      const model = toWireModel(input.model)
+      const created = unwrap(
+        await session.create({
+          location: { directory: toLocationDir(input.directory) },
+          ...(input.title ? { title: input.title } : {}),
+          ...(model ? { model } : {}),
+        }),
+      )
+      const sessionID = String((created as Record<string, unknown>)?.id ?? "")
+      if (!sessionID) throw new Error("session.create returned no id")
+      if (input.agent) {
+        await session.switchAgent({ sessionID, agent: input.agent })
+      }
+      return { sessionID }
+    },
+
+    async prompt(sessionID, text) {
+      await session.prompt({ sessionID, text })
+    },
+
+    async wait(sessionID) {
+      await session.wait({ sessionID })
+    },
+
+    async interrupt(sessionID) {
+      await session.interrupt({ sessionID })
+    },
+
+    async transcript(sessionID): Promise<string[]> {
+      // Prefer the context endpoint (same shape the plugin ctx uses); fall back to message listing.
+      const fetchers = [session.context, session.messages].filter(
+        (f): f is (input: Record<string, unknown>) => Promise<unknown> => typeof f === "function",
+      )
+      for (const fetch of fetchers) {
+        try {
+          const raw = toArray(await fetch.call(session, { sessionID }))
+          const lines: string[] = []
+          for (const m of raw) {
+            const rec = m as Record<string, unknown>
+            const parts = rec.parts ?? rec.content
+            if (Array.isArray(parts)) {
+              for (const part of parts) {
+                const p = part as Record<string, unknown>
+                if (p.type === "text" && typeof p.text === "string") lines.push(p.text)
+              }
+            }
+          }
+          return lines
+        } catch {
+          /* try next fetcher */
+        }
+      }
+      return []
+    },
+  }
+}
+
 export async function connectOpenCode(options: ConnectOptions = {}): Promise<ClawOpenCodePort> {
   let baseUrl: string
   let headers: Record<string, string>
@@ -142,67 +229,8 @@ export async function connectOpenCode(options: ConnectOptions = {}): Promise<Cla
       }
     },
 
-    async createSession(input: CreateSessionInput) {
-      // Wire note (verified against live server): session.create expects
-      // model as { providerID, id }; other endpoints/schemas use `modelID`.
-      const model = toWireModel(input.model)
-      const created = unwrap(
-        await client.session.create({
-          location: { directory: toLocationDir(input.directory) },
-          ...(input.title ? { title: input.title } : {}),
-          ...(model ? { model } : {}),
-        }),
-      )
-      const sessionID = String((created as Record<string, unknown>)?.id ?? "")
-      if (!sessionID) throw new Error("session.create returned no id")
-      if (input.agent) {
-        await client.session.switchAgent({ sessionID, agent: input.agent })
-      }
-      return { sessionID }
-    },
-
-    async prompt(sessionID, text) {
-      await client.session.prompt({ sessionID, text })
-    },
-
-    async wait(sessionID) {
-      await client.session.wait({ sessionID })
-    },
-
-    async interrupt(sessionID) {
-      await client.session.interrupt({ sessionID })
-    },
-
-    async transcript(sessionID): Promise<string[]> {
-      // Prefer the context endpoint (same shape the plugin ctx uses); fall back to message listing.
-      const anyClient = client.session as unknown as Record<
-        string,
-        ((input: unknown) => Promise<unknown>) | undefined
-      >
-      const fetchers = [anyClient.context, anyClient.messages].filter(
-        (f): f is (input: unknown) => Promise<unknown> => typeof f === "function",
-      )
-      for (const fetch of fetchers) {
-        try {
-          const raw = toArray(await fetch.call(client.session, { sessionID }))
-          const lines: string[] = []
-          for (const m of raw) {
-            const rec = m as Record<string, unknown>
-            const parts = rec.parts ?? rec.content
-            if (Array.isArray(parts)) {
-              for (const part of parts) {
-                const p = part as Record<string, unknown>
-                if (p.type === "text" && typeof p.text === "string") lines.push(p.text)
-              }
-            }
-          }
-          return lines
-        } catch {
-          /* try next fetcher */
-        }
-      }
-      return []
-    },
+    // Session control goes through the same firewall adapter the plugin uses.
+    ...sessionControl(client.session as unknown as SessionApiLike),
 
     // Normalize the beta wire shape ({ type, data: { sessionID }, ... }) to
     // ClawEvent at the firewall; consumers never touch raw fields. Beta drift

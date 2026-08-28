@@ -33,6 +33,8 @@ export interface ClawConfig {
   tickMs: number
   /** Watchdog budget per run: running tasks with no terminal event past this are force-failed. */
   taskTimeoutMs: number
+  /** Per-delegation budget: a delegate call that overruns is interrupted and failed. */
+  delegateTimeoutMs: number
   /** Model pinned for every scheduled dispatch (unattended runs never use server defaults). */
   model?: ModelRef
   schedules: ScheduleConfig[]
@@ -70,7 +72,13 @@ export function parseConfig(raw: unknown): ClawConfig {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error("claw config must be a JSON object with a 'schedules' array")
   }
-  const obj = raw as { tickSeconds?: unknown; taskTimeoutSeconds?: unknown; model?: unknown; schedules?: unknown }
+  const obj = raw as {
+    tickSeconds?: unknown
+    taskTimeoutSeconds?: unknown
+    delegateTimeoutSeconds?: unknown
+    model?: unknown
+    schedules?: unknown
+  }
   if (!Array.isArray(obj.schedules)) {
     throw new Error("claw config must have a 'schedules' array")
   }
@@ -82,6 +90,13 @@ export function parseConfig(raw: unknown): ClawConfig {
   if (!Number.isFinite(taskTimeoutMs) || taskTimeoutMs <= 0) {
     throw new Error(
       `config taskTimeoutSeconds must be a positive number, got ${JSON.stringify(obj.taskTimeoutSeconds)}`,
+    )
+  }
+  const delegateTimeoutMs =
+    obj.delegateTimeoutSeconds === undefined ? 600_000 : Number(obj.delegateTimeoutSeconds) * 1000
+  if (!Number.isFinite(delegateTimeoutMs) || delegateTimeoutMs <= 0) {
+    throw new Error(
+      `config delegateTimeoutSeconds must be a positive number, got ${JSON.stringify(obj.delegateTimeoutSeconds)}`,
     )
   }
 
@@ -103,7 +118,7 @@ export function parseConfig(raw: unknown): ClawConfig {
     } satisfies ScheduleConfig
   })
   const model = parseModelRef(obj.model)
-  return { tickMs, taskTimeoutMs, ...(model ? { model } : {}), schedules }
+  return { tickMs, taskTimeoutMs, delegateTimeoutMs, ...(model ? { model } : {}), schedules }
 }
 
 export function defaultConfigPath(root: string): string {

@@ -44,6 +44,12 @@ export function makeFakePort(): {
   beforePrompt(fn: () => void): void
   /** Arm the gate: the NEXT prompt() call blocks until open() is called. */
   armGate(): { open: () => void }
+  /** Block the NEXT wait() call until open() — models a worker still running. */
+  armWaitGate(): { open: () => void }
+  /** Sessions whose wait() has resolved (worker finished). */
+  readonly waited: string[]
+  /** Sessions passed to interrupt() (timeout / cancellation path). */
+  readonly interrupted: string[]
   /** Canned transcript lines returned by port.transcript(). */
   setTranscript(lines: string[]): void
   /** Feed events into port.events() (the fake server event stream). */
@@ -56,6 +62,10 @@ export function makeFakePort(): {
   const enterHooks: Array<() => void> = []
   let armed: Promise<void> | null = null
   let openGate: () => void = () => {}
+  let armedWait: Promise<void> | null = null
+  let openWait: () => void = () => {}
+  const waited: string[] = []
+  const interrupted: string[] = []
   let transcript: string[] = []
   const eventQueue: ClawEvent[] = []
   let eventWaiter: (() => void) | null = null
@@ -85,8 +95,15 @@ export function makeFakePort(): {
       if (armed) await armed
       prompts.push({ sessionID, text })
     },
-    async wait() {},
-    async interrupt() {},
+    async wait(sessionID: string) {
+      const gate = armedWait
+      armedWait = null
+      if (gate) await gate
+      waited.push(sessionID)
+    },
+    async interrupt(sessionID: string) {
+      interrupted.push(sessionID)
+    },
     async transcript() {
       return transcript
     },
@@ -108,12 +125,20 @@ export function makeFakePort(): {
     port,
     sessions,
     prompts,
+    waited,
+    interrupted,
     beforePrompt: (fn) => enterHooks.push(fn),
     armGate() {
       armed = new Promise<void>((resolve) => {
         openGate = resolve
       })
       return { open: () => openGate() }
+    },
+    armWaitGate() {
+      armedWait = new Promise<void>((resolve) => {
+        openWait = resolve
+      })
+      return { open: () => openWait() }
     },
     setTranscript(lines) {
       transcript = lines

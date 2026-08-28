@@ -64,6 +64,12 @@ describe("config — parseConfig", () => {
     expect(() => parseConfig([])).toThrow(/config/)
   })
 
+  it("parses delegateTimeoutSeconds (delegation budget), defaulting to 10m", () => {
+    expect(parseConfig(valid).delegateTimeoutMs).toBe(10 * 60_000)
+    expect(parseConfig({ ...valid, delegateTimeoutSeconds: 30 }).delegateTimeoutMs).toBe(30_000)
+    expect(() => parseConfig({ ...valid, delegateTimeoutSeconds: -1 })).toThrow(/delegateTimeoutSeconds/)
+  })
+
   it("parses taskTimeoutSeconds into taskTimeoutMs (watchdog budget), defaulting to 15m", () => {
     expect(parseConfig(valid).taskTimeoutMs).toBe(15 * 60_000)
     expect(parseConfig({ ...valid, taskTimeoutSeconds: 60 }).taskTimeoutMs).toBe(60_000)
