@@ -64,8 +64,13 @@ describe("config — parseConfig", () => {
     expect(() => parseConfig([])).toThrow(/config/)
   })
 
-  it("parses optional top-level dispatch model 'provider/model' (model may contain slashes)", () => {
-    const withModel = parseConfig({ ...valid, model: "openrouter/openrouter/free" })
+  it("parses taskTimeoutSeconds into taskTimeoutMs (watchdog budget), defaulting to 15m", () => {
+    expect(parseConfig(valid).taskTimeoutMs).toBe(15 * 60_000)
+    expect(parseConfig({ ...valid, taskTimeoutSeconds: 60 }).taskTimeoutMs).toBe(60_000)
+    expect(() => parseConfig({ ...valid, taskTimeoutSeconds: 0 })).toThrow(/taskTimeoutSeconds/)
+  })
+
+  it("parses optional top-level dispatch model 'provider/model' (model may contain slashes)", () => {    const withModel = parseConfig({ ...valid, model: "openrouter/openrouter/free" })
     expect(withModel.model).toEqual({
       providerID: "openrouter",
       modelID: "openrouter/free",

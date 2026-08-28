@@ -11,6 +11,7 @@
  */
 import { existsSync } from "node:fs"
 import type { ClawConfig } from "./config"
+import { previousResult } from "./completion"
 import type { ClawDb } from "./db"
 import type { Clock, ClawOpenCodePort } from "./ports"
 
@@ -23,6 +24,8 @@ export interface SchedulerDeps {
   clawRoot: string
   killSwitchPath: string
   log?: (msg: string) => void
+  /** Runs after every tick (even killed ones) — production uses it for the watchdog sweep. */
+  afterTick?: (now: number) => void
 }
 
 export interface DispatchRecord {
@@ -78,8 +81,13 @@ async function runTick(deps: SchedulerDeps): Promise<TickResult> {
     // Claim durably BEFORE dispatching: task row (queued → running) and the
     // schedule's last_dispatched_at. If we die mid-prompt, the next daemon
     // life sees an in-flight task and a fresh claim — no duplicate dispatch.
+    // Payload carries the previous run's compact result (decision 11): the
+    // orchestrator prompt reads `previous.pointer` for incremental checks.
     const task = deps.db.createTask(
-      { type: "watchdog", payload: { scheduleId: s.id, repo: s.repo } },
+      {
+        type: "watchdog",
+        payload: { scheduleId: s.id, repo: s.repo, previous: previousResult(deps.db, s.id) },
+      },
       now,
     )
     deps.db.markTaskRunning(task.id, now)
@@ -125,6 +133,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       stopped = false
       while (!stopped) {
         await tick()
+        // Reconciliation is not dispatch: the watchdog sweeps even while the
+        // kill-switch halts new work, so in-flight tasks still get resolved.
+        deps.afterTick?.(deps.clock.now())
         if (stopped) break
         await deps.clock.sleep(deps.config.tickMs)
       }

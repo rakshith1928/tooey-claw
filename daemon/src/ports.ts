@@ -7,10 +7,15 @@
  * @opencode-ai/* directly (beta-churn firewall, SPEC decision 2).
  */
 
-/** Normalized event from the OpenCode server event stream. */
+/**
+ * Normalized event from the OpenCode server event stream (verified against
+ * client beta types): lifecycle events carry at least a sessionID in `data`.
+ */
 export interface ClawEvent {
   type: string
-  properties?: Record<string, unknown>
+  sessionID?: string
+  /** Raw event payload, kept for defensive field extraction by the firewall. */
+  data?: Record<string, unknown>
 }
 
 export interface AgentSummary {

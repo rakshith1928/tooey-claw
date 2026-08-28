@@ -13,6 +13,7 @@ import { openClawDb } from "./db"
 import { canonical, DB_PATH, KILL_SWITCH_PATH, CLAW_ROOT, ensureDataDir } from "./paths"
 import { SystemClock } from "./clock"
 import { createScheduler } from "./scheduler"
+import { recoverOrphans, watchEvents, watchdogSweep, type CompletionDeps } from "./completion"
 import type { ClawOpenCodePort } from "./ports"
 import { existsSync } from "node:fs"
 import path from "node:path"
@@ -32,14 +33,26 @@ function fail(message: string): never {
 }
 
 /**
- * Run mode (ticket 02): the scheduler loop over the project-local config.
+ * Run mode (tickets 02-03): boot recovery → completion watcher → scheduler loop.
  * Ctrl-C (or SIGTERM) stops the loop cleanly. A hard kill is duplicate-safe
- * (last_dispatched_at claim, verified in scheduler tests); reconciling
- * orphaned running tasks is explicitly ticket 03's scope, not this ticket's.
+ * (last_dispatched_at claim) and leaves no orphans: recoverOrphans sweeps
+ * running rows from the previous process life at startup (ticket 03).
  */
 async function runSchedulerLoop(port: ClawOpenCodePort): Promise<void> {
   const config = loadConfig(CLAW_ROOT)
   const db = openClawDb(DB_PATH)
+  const cdeps: CompletionDeps = { db, clock: SystemClock, port }
+
+  // Startup reconciliation BEFORE any dispatch: running rows can only be from
+  // the previous daemon life — our event subscription died with it.
+  const swept = recoverOrphans(cdeps)
+  if (swept > 0) console.log(`[claw] recovered ${swept} orphaned task(s) from a previous run`)
+
+  // Completion watcher: session.execution.succeeded/.failed/.interrupted and
+  // session.deleted drive task rows.
+  // It self-heals from bad events; a dropped stream exits the loop (logged).
+  void watchEvents(cdeps).then(() => console.log("[claw] event stream ended; completion watcher stopped"))
+
   const scheduler = createScheduler({
     clock: SystemClock,
     port,
@@ -47,6 +60,9 @@ async function runSchedulerLoop(port: ClawOpenCodePort): Promise<void> {
     config,
     clawRoot: CLAW_ROOT,
     killSwitchPath: KILL_SWITCH_PATH,
+    // Watchdog sweep rides the same loop cadence (ticket 03): force-fail runs
+    // whose session died silently, even while the kill-switch is engaged.
+    afterTick: (now) => watchdogSweep(cdeps, now, config.taskTimeoutMs),
   })
 
   const shutdown = () => {

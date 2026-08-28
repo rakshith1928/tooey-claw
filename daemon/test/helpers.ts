@@ -44,12 +44,22 @@ export function makeFakePort(): {
   beforePrompt(fn: () => void): void
   /** Arm the gate: the NEXT prompt() call blocks until open() is called. */
   armGate(): { open: () => void }
+  /** Canned transcript lines returned by port.transcript(). */
+  setTranscript(lines: string[]): void
+  /** Feed events into port.events() (the fake server event stream). */
+  emit(...events: ClawEvent[]): void
+  /** End the event stream (watchers finish). */
+  closeEvents(): void
 } {
   const sessions: Array<{ directory: string; agent?: string; title?: string; model?: ModelRef }> = []
   const prompts: RecordedPrompt[] = []
   const enterHooks: Array<() => void> = []
   let armed: Promise<void> | null = null
   let openGate: () => void = () => {}
+  let transcript: string[] = []
+  const eventQueue: ClawEvent[] = []
+  let eventWaiter: (() => void) | null = null
+  let eventsOpen = true
 
   const port = {
     async healthy() {
@@ -78,10 +88,19 @@ export function makeFakePort(): {
     async wait() {},
     async interrupt() {},
     async transcript() {
-      return []
+      return transcript
     },
-    events(): AsyncIterable<ClawEvent> {
-      return (async function* () {})()
+    async *events(): AsyncIterable<ClawEvent> {
+      while (true) {
+        while (eventQueue.length > 0) yield eventQueue.shift()!
+        if (!eventsOpen) return
+        await new Promise<void>((resolve) => {
+          eventWaiter = () => {
+            eventWaiter = null
+            resolve()
+          }
+        })
+      }
     },
   } as unknown as ClawOpenCodePort
 
@@ -95,6 +114,17 @@ export function makeFakePort(): {
         openGate = resolve
       })
       return { open: () => openGate() }
+    },
+    setTranscript(lines) {
+      transcript = lines
+    },
+    emit(...events) {
+      eventQueue.push(...events)
+      eventWaiter?.()
+    },
+    closeEvents() {
+      eventsOpen = false
+      eventWaiter?.()
     },
   }
 }

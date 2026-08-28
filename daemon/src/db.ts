@@ -74,6 +74,11 @@ export interface ClawDb {
 
   createTask(input: { type: string; payload: unknown }, now: number): Task
   getTask(id: string): Task | null
+  /** The running task whose dispatched session is `sessionID`, if any. */
+  findRunningBySession(sessionID: string): Task | null
+  listRunning(): Task[]
+  /** Most recent done task for a schedule id (source of the next-run pointer). */
+  lastDoneFor(scheduleId: string): Task | null
   markTaskRunning(id: string, now: number): Task | null
   finishTask(
     id: string,
@@ -123,6 +128,17 @@ export function openClawDb(filePath: string): ClawDb {
        VALUES (?, ?, ?, 'queued', ?)`,
     ),
     getTask: db.query("SELECT * FROM tasks WHERE id = ?"),
+    findRunningBySession: db.query(
+      `SELECT * FROM tasks
+       WHERE status = 'running' AND json_extract(result_json, '$.sessionID') = ?
+       LIMIT 1`,
+    ),
+    listRunning: db.query("SELECT * FROM tasks WHERE status = 'running' ORDER BY created_at"),
+    lastDoneFor: db.query(
+      `SELECT * FROM tasks
+       WHERE status = 'done' AND json_extract(payload_json, '$.scheduleId') = ?
+       ORDER BY finished_at DESC LIMIT 1`,
+    ),
     runTask: db.query(
       `UPDATE tasks SET status = 'running', started_at = ?
        WHERE id = ? AND status = 'queued'`,
@@ -163,6 +179,20 @@ export function openClawDb(filePath: string): ClawDb {
 
     getTask(id) {
       const row = stmt.getTask.get(id) as TaskRow | null
+      return row ? toTask(row) : null
+    },
+
+    findRunningBySession(sessionID) {
+      const row = stmt.findRunningBySession.get(sessionID) as TaskRow | null
+      return row ? toTask(row) : null
+    },
+
+    listRunning() {
+      return (stmt.listRunning.all() as TaskRow[]).map(toTask)
+    },
+
+    lastDoneFor(scheduleId) {
+      const row = stmt.lastDoneFor.get(scheduleId) as TaskRow | null
       return row ? toTask(row) : null
     },
 

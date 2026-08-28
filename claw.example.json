@@ -1,6 +1,7 @@
 {
   "$comment": "Copy to claw.json at the Claw root and edit. claw.json is gitignored (it names your private repos).",
   "tickSeconds": 60,
+  "taskTimeoutSeconds": 900,
   "model": "openrouter/openrouter/free",
   "schedules": [
     {

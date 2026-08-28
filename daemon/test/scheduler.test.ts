@@ -189,6 +189,22 @@ describe("scheduler — single-flight lock (ticket: blocks a second concurrent r
     expect(third.skipped).toBeFalsy()
     expect(third.dispatched).toHaveLength(1)
   })
+
+  it("next dispatch's payload carries the previous run's result pointer (incremental runs)", async () => {
+    const s = scheduler()
+    await s.tick() // t=0 dispatch #1
+
+    // Completion happens out-of-band (ticket 03): finish task #1 with a pointer.
+    const rows = db.queryAll<{ id: string }>("SELECT id FROM tasks ORDER BY created_at")
+    db.finishTask(rows[0]!.id, "done", { result: { verdict: "all clear", pointer: { lastFinishedAt: 0 } } }, 60_000)
+
+    clock.advance(15 * MIN)
+    await s.tick() // dispatch #2
+
+    const payloads = db.queryAll<{ payload_json: string }>("SELECT payload_json FROM tasks ORDER BY created_at")
+    const p2 = JSON.parse(payloads[1]!.payload_json)
+    expect(p2.previous).toEqual({ verdict: "all clear", pointer: { lastFinishedAt: 0 } })
+  })
 })
 
 describe("scheduler — kill switch (ticket: halts dispatch within one tick, resumes on removal)", () => {

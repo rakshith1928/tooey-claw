@@ -204,11 +204,18 @@ export async function connectOpenCode(options: ConnectOptions = {}): Promise<Cla
       return []
     },
 
-    // NOTE: the documented zero-argument subscribe form is used because the
-    // beta request-options shape for streaming endpoints is not contractual.
-    // Cancellation refinement lands with ticket 03 (event-driven completion).
-    events(): AsyncIterable<ClawEvent> {
-      return client.event.subscribe()
+    // Normalize the beta wire shape ({ type, data: { sessionID }, ... }) to
+    // ClawEvent at the firewall; consumers never touch raw fields. Beta drift
+    // lands here, in this one mapping function, nowhere else (decision 2).
+    async *events(): AsyncIterable<ClawEvent> {
+      for await (const raw of client.event.subscribe() as AsyncIterable<Record<string, unknown>>) {
+        const data = (raw?.data ?? {}) as Record<string, unknown>
+        yield {
+          type: String(raw?.type ?? ""),
+          sessionID: typeof data.sessionID === "string" ? data.sessionID : undefined,
+          data,
+        }
+      }
     },
   }
 }
