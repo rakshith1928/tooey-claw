@@ -76,8 +76,8 @@ bun run typecheck
 
 - [x] Ticket 01 — boot & wiring (agents load, plugin active, live probe green)
 - [x] Ticket 02 — scheduler & dispatch skeleton (fake-clock tests, live demo fired once)
-- [ ] Ticket 03 — completion detection & crash recovery
-- [ ] Ticket 04 — delegation path
+- [x] Ticket 03 — completion detection & crash recovery
+- [x] Ticket 04 — delegation path
 - [ ] Ticket 05 — watchdog end-to-end
 - [ ] Ticket 06 — centralized permission policy
 - [ ] Ticket 07 — memory store (FTS5)
