@@ -141,7 +141,7 @@ still in flight is held, not stacked.
 - [x] Ticket 02 — scheduler & dispatch skeleton (fake-clock tests, live demo fired once)
 - [x] Ticket 03 — completion detection & crash recovery
 - [x] Ticket 04 — delegation path
-- [ ] Ticket 05 — watchdog end-to-end
+- [x] Ticket 05 — watchdog end-to-end (two unattended incremental runs, live-proven)
 - [ ] Ticket 06 — centralized permission policy
 - [ ] Ticket 07 — memory store (FTS5)
 - [ ] Ticket 08 — memory tools & auto-injection

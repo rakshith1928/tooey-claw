@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Two consecutive scheduled runs complete fully unattended against a real repository
-- [ ] Run 2's dispatch payload demonstrably contains run 1's result pointer
-- [ ] Both verdicts persisted and inspectable in the database
-- [ ] README documents how to reproduce the demo end-to-end
+- [x] Two consecutive scheduled runs complete fully unattended against a real repository
+- [x] Run 2's dispatch payload demonstrably contains run 1's result pointer
+- [x] Both verdicts persisted and inspectable in the database
+- [x] README documents how to reproduce the demo end-to-end
