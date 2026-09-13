@@ -68,9 +68,72 @@ session, with a durable task row and the kill switch (`data/kill`) honored every
 ```sh
 cp claw.example.json claw.json   # gitignored — names your private repos
 bun run dev                       # Ctrl-C stops; data/kill halts dispatch without stopping
-bun test                          # 62 tests at the approved seams (no network/model calls)
+bun test                          # tests at the approved seams (no network/model calls)
 bun run typecheck
 ```
+
+## Watchdog end-to-end demo (ticket 05)
+
+Two consecutive unattended scheduled runs against a real repository, with run 2
+behaving incrementally off run 1's verdict. Reproduce:
+
+1. **Configure** `claw.json` with a real repo and a short cadence for the demo
+   (config uses Windows paths here; adjust to taste):
+
+   ```json
+   {
+     "tickSeconds": 10,
+     "model": "openrouter/openrouter/free",
+     "schedules": [
+       {
+         "id": "demo",
+         "name": "Demo repo",
+         "repo": "C:\\path\\to\\a\\real\\repo",
+         "cadence": "every:2m",
+         "prompt": "Watchdog run for this repository. Check recent git activity: run `git log --oneline -5` and `git status --short`. Reply with a compact verdict of the form: VERDICT: <one sentence on repo state> NEXT-RUN: <most useful pointer for the next incremental run, e.g. the newest commit hash you saw>. Keep it to those two lines, nothing else.",
+         "enabled": true
+       }
+     ]
+   }
+   ```
+
+2. **Fresh state, then run the daemon** (leave it running through two cadence
+   windows — with `every:2m`, about 5 minutes total):
+
+   ```sh
+   rm data/claw.db*          # optional: start from a clean slate
+   bun run dev
+   ```
+
+   The daemon boots through the checks, sweeps any orphans, starts the
+   completion watcher, and ticks every 10s. Run 1 dispatches immediately.
+
+3. **Watch it happen** in the daemon's own log lines:
+
+   ```
+   [claw] scheduler running: 1 schedule(s), tick 10s, db data\claw.db
+   [claw] dispatched ticket-05-demo → session ses_… (task …)          ← run 1
+   [claw] task … done (session ses_…)
+   [claw] dispatched ticket-05-demo → session ses_… (task …) [incremental]   ← run 2
+   ```
+
+4. **Prove it in the database** — both verdicts persisted, run 2's payload
+   carrying run 1's pointer:
+
+   ```sh
+   bun -e 'import {openClawDb} from "./daemon/src/db"; const db = openClawDb("data/claw.db");
+     for (const t of db.listTasks({type:"watchdog"})) console.log(t.status, JSON.stringify(t.result));
+     db.close()'
+   ```
+
+   Run 2's task payload also embeds `previous` (the pointer channel), and the
+   run-2 prompt visibly contains a `PREVIOUS RUN` section with run 1's verdict —
+   that is the incremental behavior, by construction.
+
+The whole chain, unattended: schedule → orchestrator session → completion
+detected from the server event stream → verdict + pointer persisted → next
+dispatch inlines them → second completion. A due schedule whose previous run is
+still in flight is held, not stacked.
 
 ## Status
 

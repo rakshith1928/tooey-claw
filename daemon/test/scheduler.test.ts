@@ -43,6 +43,12 @@ function scheduler(cfg = config()) {
   })
 }
 
+/** Finish run 1 like the ticket-03 event watcher would. */
+function completeFirstRun() {
+  const rows = db.queryAll<{ id: string }>("SELECT id FROM tasks ORDER BY created_at")
+  db.finishTask(rows[0]!.id, "done", { result: { verdict: "ok" } }, clock.now())
+}
+
 beforeEach(() => {
   tmp = mkdtempSync(path.join(os.tmpdir(), "claw-sched-"))
   db = openClawDb(path.join(tmp, "claw.db"))
@@ -75,6 +81,9 @@ describe("scheduler — due dispatch (ticket: due schedule dispatches exactly on
     expect((await s.tick()).dispatched).toEqual([]) // not yet due
 
     clock.advance(1 * MIN) // t=15m exactly
+    // Previous run still in flight → held (ticket 05 in-flight guard).
+    expect((await s.tick()).dispatched).toEqual([])
+    completeFirstRun()
     expect((await s.tick()).dispatched.map((d) => d.scheduleId)).toEqual(["watchdog-a"])
     expect(fake.sessions).toHaveLength(2)
   })
@@ -185,25 +194,73 @@ describe("scheduler — single-flight lock (ticket: blocks a second concurrent r
 
     // After the first run completes, the lock is released.
     clock.advance(15 * MIN)
+    completeFirstRun() // ticket 03 finishes run 1; until then the guard holds
     const third = await s.tick()
     expect(third.skipped).toBeFalsy()
     expect(third.dispatched).toHaveLength(1)
   })
 
-  it("next dispatch's payload carries the previous run's result pointer (incremental runs)", async () => {
+  it("ticket: in-flight guard — a due schedule with a still-running previous task does not double-dispatch", async () => {
     const s = scheduler()
-    await s.tick() // t=0 dispatch #1
+    await s.tick() // run 1 dispatched at t=0, never completed
 
-    // Completion happens out-of-band (ticket 03): finish task #1 with a pointer.
+    clock.advance(15 * MIN) // cadence fully elapsed while run 1 still running
+    const r2 = await s.tick()
+    expect(r2.dispatched).toEqual([]) // no second session while one is in flight
+    expect(fake.sessions).toHaveLength(1)
+    expect(r2.inFlight).toEqual(["watchdog-a"]) // surfaced, not silent
+
+    // The run completes out-of-band (event watcher) → the next tick can dispatch.
     const rows = db.queryAll<{ id: string }>("SELECT id FROM tasks ORDER BY created_at")
-    db.finishTask(rows[0]!.id, "done", { result: { verdict: "all clear", pointer: { lastFinishedAt: 0 } } }, 60_000)
+    db.finishTask(rows[0]!.id, "done", { result: { verdict: "ok" } }, clock.now())
+    const r3 = await s.tick() // same clock time: dispatch was only blocked by in-flight
+    expect(r3.dispatched.map((d) => d.scheduleId)).toEqual(["watchdog-a"])
+    expect(fake.sessions).toHaveLength(2)
+  })
+
+  it("ticket: run 2's PROMPT carries run 1's result — incremental 'since' runs (decision 11)", async () => {
+    const s = scheduler()
+    await s.tick() // run 1 at t=0
+    const rows = db.queryAll<{ id: string }>("SELECT id FROM tasks ORDER BY created_at")
+    db.finishTask(
+      rows[0]!.id,
+      "done",
+      { result: { sessionID: "ses_1", verdict: "3 open issues", pointer: { lastFinishedAt: 0, seen: "issue-9" } } },
+      60_000,
+    )
 
     clock.advance(15 * MIN)
-    await s.tick() // dispatch #2
+    await s.tick() // run 2
 
-    const payloads = db.queryAll<{ payload_json: string }>("SELECT payload_json FROM tasks ORDER BY created_at")
-    const p2 = JSON.parse(payloads[1]!.payload_json)
-    expect(p2.previous).toEqual({ verdict: "all clear", pointer: { lastFinishedAt: 0 } })
+    // Payload AND prompt both carry the previous result: the orchestrator
+    // sees "since" without any tool call.
+    const payload2 = JSON.parse(
+      db.queryAll<{ payload_json: string }>("SELECT payload_json FROM tasks ORDER BY created_at")[1]!.payload_json,
+    )
+    expect(payload2.previous.pointer).toEqual({ lastFinishedAt: 0, seen: "issue-9" })
+
+    const prompt2 = fake.prompts[1]!.text
+    expect(prompt2).toContain("Check repo A since last run.") // user prompt intact
+    expect(prompt2).toContain("VERDICT: 3 open issues") // previous verdict inlined
+    expect(prompt2).toContain('"lastFinishedAt":0') // pointer serialized verbatim
+
+    // Run 1 (no previous) prompts without the injected section.
+    expect(fake.prompts[0]!.text).not.toContain("VERDICT")
+  })
+
+  it("ticket: failed previous run does not block the next dispatch (in-flight guard is running-only)", async () => {
+    const s = scheduler()
+    await s.tick()
+    const rows = db.queryAll<{ id: string }>("SELECT id FROM tasks ORDER BY created_at")
+    db.finishTask(rows[0]!.id, "failed", { error: "watchdog timeout" }, clock.now())
+
+    clock.advance(15 * MIN)
+    const r2 = await s.tick()
+    expect(r2.dispatched.map((d) => d.scheduleId)).toEqual(["watchdog-a"])
+    const payload2 = JSON.parse(
+      db.queryAll<{ payload_json: string }>("SELECT payload_json FROM tasks ORDER BY created_at")[1]!.payload_json,
+    )
+    expect(payload2.previous).toBeNull() // failed run leaves no pointer
   })
 })
 
@@ -247,6 +304,11 @@ describe("scheduler — runLoop (tick → sleep → tick, never raw wall time)",
     expect(fake.sessions).toHaveLength(1) // schedule not due again until 15m
 
     clock.advance(14 * MIN) // now past 15m total
+    await flush()
+    // Run 1 never completed in this fake loop → in-flight guard holds.
+    expect(fake.sessions).toHaveLength(1)
+    completeFirstRun()
+    clock.advance(60_000) // next loop tick observes the completion
     await flush()
     expect(fake.sessions).toHaveLength(2)
 

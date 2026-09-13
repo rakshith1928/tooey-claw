@@ -81,6 +81,8 @@ export interface ClawDb {
   listTasks(opts?: { status?: string; type?: string; limit?: number }): Task[]
   /** Most recent done task for a schedule id (source of the next-run pointer). */
   lastDoneFor(scheduleId: string): Task | null
+  /** The still-running task for a schedule, if any (in-flight guard, ticket 05). */
+  findRunningForSchedule(scheduleId: string): Task | null
   markTaskRunning(id: string, now: number): Task | null
   finishTask(
     id: string,
@@ -140,6 +142,11 @@ export function openClawDb(filePath: string): ClawDb {
       `SELECT * FROM tasks
        WHERE status = 'done' AND json_extract(payload_json, '$.scheduleId') = ?
        ORDER BY finished_at DESC LIMIT 1`,
+    ),
+    findRunningForSchedule: db.query(
+      `SELECT * FROM tasks
+       WHERE status = 'running' AND json_extract(payload_json, '$.scheduleId') = ?
+       ORDER BY created_at DESC LIMIT 1`,
     ),
     listTasksAll: db.query("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?"),
     listTasksStatus: db.query("SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?"),
@@ -214,6 +221,11 @@ export function openClawDb(filePath: string): ClawDb {
 
     lastDoneFor(scheduleId) {
       const row = stmt.lastDoneFor.get(scheduleId) as TaskRow | null
+      return row ? toTask(row) : null
+    },
+
+    findRunningForSchedule(scheduleId) {
+      const row = stmt.findRunningForSchedule.get(scheduleId) as TaskRow | null
       return row ? toTask(row) : null
     },
 
