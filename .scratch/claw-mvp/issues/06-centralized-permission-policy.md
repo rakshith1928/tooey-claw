@@ -4,9 +4,9 @@
 
 **Blocked by:** 01 (Boot & wiring).
 
-**Status:** ready-for-agent
+**Status:** done (737511a)
 
-- [ ] Destructive action attempt is denied centrally via the hook (hook-level test)
-- [ ] Allowlisted actions pass through unchanged
-- [ ] An explicit configured deny is final and never overridden by the hook
-- [ ] Policy rules load from project-local configuration
+- [x] Destructive action attempt is denied centrally via the hook (hook-level test)
+- [x] Allowlisted actions pass through unchanged
+- [x] An explicit configured deny is final and never overridden by the hook
+- [x] Policy rules load from project-local configuration
