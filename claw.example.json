@@ -4,6 +4,10 @@
   "taskTimeoutSeconds": 900,
   "delegateTimeoutSeconds": 600,
   "model": "openrouter/openrouter/free",
+  "policy": {
+    "$comment": "Deny-by-default for destructive actions (edit/write/patch/webfetch/shell). List actions unattended runs may use without asking. Create data/policy-off to disable enforcement without a restart (break-glass).",
+    "allow": ["shell"]
+  },
   "schedules": [
     {
       "id": "watchdog-claw",

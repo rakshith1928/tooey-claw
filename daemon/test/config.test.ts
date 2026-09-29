@@ -64,6 +64,20 @@ describe("config — parseConfig", () => {
     expect(() => parseConfig([])).toThrow(/config/)
   })
 
+  it("parses the optional policy block; default is the strictest (no allow)", () => {
+    expect(parseConfig(valid).policy).toEqual({ allow: [] })
+    expect(parseConfig({ ...valid, policy: { allow: ["shell"] } }).policy).toEqual({ allow: ["shell"] })
+    expect(parseConfig({ ...valid, policy: {} }).policy).toEqual({ allow: [] })
+    // Blanks must not become a wildcard allow.
+    expect(parseConfig({ ...valid, policy: { allow: ["shell", "  ", ""] } }).policy).toEqual({ allow: ["shell"] })
+  })
+
+  it("rejects a malformed policy instead of silently weakening enforcement", () => {
+    expect(() => parseConfig({ ...valid, policy: { allow: "shell" } })).toThrow(/policy.allow/)
+    expect(() => parseConfig({ ...valid, policy: { allow: [1, 2] } })).toThrow(/policy.allow/)
+    expect(() => parseConfig({ ...valid, policy: [] })).toThrow(/policy/)
+  })
+
   it("parses delegateTimeoutSeconds (delegation budget), defaulting to 10m", () => {
     expect(parseConfig(valid).delegateTimeoutMs).toBe(10 * 60_000)
     expect(parseConfig({ ...valid, delegateTimeoutSeconds: 30 }).delegateTimeoutMs).toBe(30_000)

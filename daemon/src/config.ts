@@ -29,6 +29,14 @@ export interface ScheduleConfig {
   enabled: boolean
 }
 
+export type PermissionEffect = "allow" | "deny" | "ask"
+
+/** Permission policy (ticket 06): deny-by-default with an explicit allowance list. */
+export interface Policy {
+  /** Destructive actions opted in (may run without asking a human). */
+  allow: string[]
+}
+
 export interface ClawConfig {
   tickMs: number
   /** Watchdog budget per run: running tasks with no terminal event past this are force-failed. */
@@ -37,6 +45,8 @@ export interface ClawConfig {
   delegateTimeoutMs: number
   /** Model pinned for every scheduled dispatch (unattended runs never use server defaults). */
   model?: ModelRef
+  /** Centralized permission policy; defaults to the strictest (empty allow list). */
+  policy: Policy
   schedules: ScheduleConfig[]
 }
 
@@ -49,6 +59,21 @@ export function parseModelRef(raw: unknown): ModelRef | undefined {
     throw new Error(`config model ${JSON.stringify(raw)} must look like "provider/model"`)
   }
   return { providerID: raw.slice(0, slash), modelID: raw.slice(slash + 1) }
+}
+
+/** Parse the optional `policy` block: `{ allow: ["shell"] }` → { allow: ["shell"] }. */
+export function parsePolicy(raw: unknown): Policy {
+  if (raw === undefined || raw === null) return { allow: [] } // strictest default
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`config policy must be an object like { "allow": ["shell"] }`)
+  }
+  const allow = (raw as { allow?: unknown }).allow
+  if (allow === undefined) return { allow: [] }
+  if (!Array.isArray(allow) || allow.some((a) => typeof a !== "string")) {
+    throw new Error(`config policy.allow must be an array of strings, got ${JSON.stringify(allow)}`)
+  }
+  // Drop blanks: an empty/whitespace entry must not become a wildcard.
+  return { allow: allow.map((a) => a.trim()).filter((a) => a.length > 0) }
 }
 
 /** "every:15m" / "every:2h" / "every:1d" → milliseconds. */
@@ -77,6 +102,7 @@ export function parseConfig(raw: unknown): ClawConfig {
     taskTimeoutSeconds?: unknown
     delegateTimeoutSeconds?: unknown
     model?: unknown
+    policy?: unknown
     schedules?: unknown
   }
   if (!Array.isArray(obj.schedules)) {
@@ -118,7 +144,8 @@ export function parseConfig(raw: unknown): ClawConfig {
     } satisfies ScheduleConfig
   })
   const model = parseModelRef(obj.model)
-  return { tickMs, taskTimeoutMs, delegateTimeoutMs, ...(model ? { model } : {}), schedules }
+  const policy = parsePolicy(obj.policy)
+  return { tickMs, taskTimeoutMs, delegateTimeoutMs, policy, ...(model ? { model } : {}), schedules }
 }
 
 export function defaultConfigPath(root: string): string {

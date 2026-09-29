@@ -17,7 +17,8 @@ import { runDelegation } from "../../daemon/src/delegate"
 import { taskCreate, taskList, taskUpdate, taskSummary } from "../../daemon/src/taskops"
 import { openClawDb } from "../../daemon/src/db"
 import { canonical } from "../../daemon/src/paths"
-import { loadConfig } from "../../daemon/src/config"
+import { defaultConfigPath, loadConfig, type Policy } from "../../daemon/src/config"
+import { evaluate, POLICY_BYPASS_FILENAME } from "../../daemon/src/policy"
 import { SystemClock } from "../../daemon/src/clock"
 
 // The Claw root is two directories above .opencode/plugins/ — deterministic,
@@ -34,13 +35,19 @@ export default Plugin.define({
     // (server-default model); the daemon hard-requires it for scheduling.
     let delegateTimeoutMs = 600_000
     let model: { providerID: string; modelID: string } | undefined
+    // Missing/broken config must NOT silently weaken enforcement: the policy
+    // falls back to the strictest setting (empty allow list) rather than to
+    // "no policy at all".
+    let policy: Policy = { allow: [] }
     try {
       const cfg = loadConfig(CLAW_ROOT)
       delegateTimeoutMs = cfg.delegateTimeoutMs
       model = cfg.model
+      policy = cfg.policy
     } catch {
-      console.log("[claw-core] no usable claw.json — delegation on server defaults")
+      console.log("[claw-core] no usable claw.json — delegation on server defaults, strict permission policy")
     }
+    console.log(`[claw-core] permission policy: allow=[${policy.allow.join(", ")}] (everything else destructive → denied)`)
     const port = sessionControl(ctx.session as unknown as SessionApiLike)
     const json = (v: unknown) => JSON.stringify(v, null, 2)
 
@@ -138,14 +145,73 @@ export default Plugin.define({
           content: json(taskSummary(taskUpdate(db, SystemClock, input))),
         }),
       })
+
+      draft.add({
+        name: "policy",
+        description:
+          "Inspect the currently enforced Claw permission policy: the allow list, which config file it came from, and whether the break-glass bypass (data/policy-off) is active. Diagnoses 'why was my tool denied'.",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        options: { namespace: "claw" },
+        execute: async () => {
+          const isBypassed = existsSync(bypassPath)
+          return {
+            content: json({
+              allow: policy.allow,
+              source: defaultConfigPath(CLAW_ROOT),
+              bypassed: isBypassed,
+              bypassPath,
+              note: isBypassed
+                ? "policy enforcement DISABLED by bypass sentinel — all evaluations pass through"
+                : "deny-by-default for destructive actions; configured OpenCode denies are final",
+            }),
+          }
+        },
+      })
     })
 
     if (!existsSync(path.join(CLAW_ROOT, "claw.json"))) {
       console.log("[claw-core] note: no claw.json — scheduler config absent, tools still active")
     }
 
-    // Later tickets register the session-context + permission-evaluation
-    // hooks here (tickets 06/08).
+    // ── Centralized permission policy (ticket 06) ──────────────────────────
+    // Every permission evaluation in a Claw-rooted session passes through the
+    // pure evaluator. This is the single enforcement point: a model asking for
+    // a destructive action gets denied here regardless of what it intended,
+    // and an OpenCode-configured deny is never upgraded (see policy.ts).
+    // Break-glass: creating data/policy-off disables enforcement per-evaluation
+    // (no restart needed) so a misconfigured policy can never lock the operator out.
+    const bypassPath = path.join(CLAW_ROOT, "data", POLICY_BYPASS_FILENAME)
+    const decisions: string[] = []
+    await ctx.permission.hook("evaluate", (evaluation) => {
+      const bypassed = existsSync(bypassPath)
+      const decision = evaluate(
+        {
+          sessionID: String(evaluation.sessionID),
+          ...(evaluation.agent ? { agent: String(evaluation.agent) } : {}),
+          action: String(evaluation.action),
+          resources: evaluation.resources.map(String),
+          effect: evaluation.effect as "allow" | "deny" | "ask",
+          ...(evaluation.message ? { message: evaluation.message } : {}),
+        },
+        policy,
+        undefined,
+        { bypassed },
+      )
+      if (decision.effect !== evaluation.effect) {
+        const line =
+          `[claw-core] permission ${evaluation.action} ${evaluation.effect}→${decision.effect}` +
+          ` (${decision.reason}, session ${evaluation.sessionID}${evaluation.agent ? `, agent ${evaluation.agent}` : ""})`
+        decisions.push(line)
+        if (decisions.length > 50) decisions.shift() // bounded in-memory log
+        console.log(line)
+      }
+      // Mutating the evaluation is how the hook enforces: OpenCode reads
+      // these fields after every hook has run.
+      evaluation.effect = decision.effect
+      if (decision.message) evaluation.message = decision.message
+    })
+
+    // Later tickets register the session-context hook here (ticket 08).
     return () => {
       db.close()
       console.log("[claw-core] unloaded")
