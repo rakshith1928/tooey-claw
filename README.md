@@ -24,21 +24,36 @@ claw.example.json        # scheduler config template → copy to claw.json (giti
 .opencode/
   agents/claw.md         # orchestrator agent definition
   agents/worker.md       # worker agent definition
-  plugins/claw-core.ts   # in-session tools (probe today; task/memory/delegate next)
+  plugins/claw-core.ts   # in-session tools + permission hook (see below)
 daemon/src/
   ports.ts               # THE seam: ClawOpenCodePort + Clock interfaces
   opencode.ts            # only file allowed to know @opencode-ai/* (beta firewall)
   paths.ts               # project-local path resolution
-  config.ts              # claw.json parsing (schedules, cadences, dispatch model)
-  db.ts                  # SQLite (bun:sqlite, WAL): tasks + schedules
+  config.ts              # claw.json parsing (schedules, cadences, dispatch model, timeouts, policy)
+  db.ts                  # SQLite (bun:sqlite, WAL): tasks + schedules (+ memory next)
   clock.ts               # SystemClock — the only real-wall-time implementation
-  scheduler.ts           # tick loop: kill switch, due check, claim, dispatch
+  scheduler.ts           # tick loop: kill switch, due check, in-flight guard, incremental prompts, dispatch
+  completion.ts          # event-driven completion: terminal events → done/failed, watchdog, orphan recovery
+  delegate.ts            # delegation: worker sessions with depth cap + timeout budget
+  taskops.ts             # task_create/list/update implementations shared by daemon + plugin
+  policy.ts              # centralized permission policy (pure evaluator)
   checks.ts              # pure boot-acceptance predicates
   index.ts               # entry: boot checks → probe mode or scheduler run mode
 daemon/test/             # unit tests (fake clock / recording fake port / temp SQLite)
 docs/SPEC.md             # spec
 .scratch/claw-mvp/       # tickets
 ```
+
+## In-session tools (what agents can call)
+
+Registered by `claw-core` under the `claw` namespace:
+
+| Tool | Purpose |
+|---|---|
+| `delegate` | Hand a bounded sub-task to another agent (e.g. `worker`); worker's answer returns as the tool result. Only the orchestrator may delegate (depth cap). |
+| `task_create` / `task_list` / `task_update` | Durable task rows that outlive the session (follow-ups, tracking). |
+| `policy` | Inspect the live permission policy: allow list, source file, bypass state. Answers "why was my tool denied". |
+| `claw_probe` | Liveness check for the plugin itself. |
 
 ## Running
 
@@ -57,9 +72,14 @@ Live probe (real session, real model call, invokes the plugin tool):
 ```sh
 # CLAW_PROBE_MODEL="provider/model" pins the model (recommended: use a cheap/free one)
 $env:CLAW_PROBE = "1"
-$env:CLAW_PROBE_MODEL = "openrouter/openrouter/free"   # example
+$env:CLAW_PROBE_MODEL = "opencode/muse-spark-1.3-contributor-free"   # example, fast + free
 bun run dev
 ```
+
+Model notes (learned the hard way): `openrouter/openrouter/free` accepts prompts
+but queues them indefinitely (0 tokens, runs die to the watchdog), and
+`opencode/muse-spark-1.3` needs billing (instant 401). The `-contributor-free`
+variant settles in seconds. Never use the kilo gateway.
 
 Scheduler run mode (ticket 02): copy the config template, edit schedules/repos, run the daemon.
 It boots through the same checks, then ticks: due schedules dispatch once into a `claw`
@@ -72,6 +92,28 @@ bun test                          # tests at the approved seams (no network/mode
 bun run typecheck
 ```
 
+## Permission policy (ticket 06)
+
+Destructive actions (`edit`, `write`, `patch`, `webfetch`, `shell`) are
+deny-by-default unless allowlisted in `claw.json` — enforced centrally by the
+plugin hook, so autonomy never depends on a model behaving well. Configured
+OpenCode denies stay final (the hook can only tighten, never loosen).
+
+```json
+{
+  "policy": { "allow": ["shell", "edit", "write"] }
+}
+```
+
+Two operator facts that will save you an hour:
+
+- **Policy is read once at plugin setup.** After editing `claw.json`, run
+  `opencode2 service restart` (note the `2` — plain `opencode` has no `service`
+  subcommand) and confirm with the `policy` tool in any session.
+- **Break-glass:** creating `data/policy-off` disables enforcement immediately,
+  no restart needed (same pattern as the `data/kill` dispatch halt). Delete the
+  file to re-enable. A misconfigured policy can never permanently lock you out.
+
 ## Watchdog end-to-end demo (ticket 05)
 
 Two consecutive unattended scheduled runs against a real repository, with run 2
@@ -83,7 +125,8 @@ behaving incrementally off run 1's verdict. Reproduce:
    ```json
    {
      "tickSeconds": 10,
-     "model": "openrouter/openrouter/free",
+     "model": "opencode/muse-spark-1.3-contributor-free",
+     "policy": { "allow": ["shell"] },
      "schedules": [
        {
          "id": "demo",
@@ -118,12 +161,18 @@ behaving incrementally off run 1's verdict. Reproduce:
    ```
 
 4. **Prove it in the database** — both verdicts persisted, run 2's payload
-   carrying run 1's pointer:
+   carrying run 1's pointer (`bun -e` can't take `import` under PowerShell
+   quoting, so use a throwaway script):
 
    ```sh
-   bun -e 'import {openClawDb} from "./daemon/src/db"; const db = openClawDb("data/claw.db");
-     for (const t of db.listTasks({type:"watchdog"})) console.log(t.status, JSON.stringify(t.result));
-     db.close()'
+   @'
+   import { openClawDb } from "./daemon/src/db"
+   const db = openClawDb("data/claw.db")
+   for (const t of db.listTasks({ type: "watchdog" }))
+     console.log(t.status, JSON.stringify(t.result))
+   db.close()
+   '@ | Set-Content -Encoding utf8 peek.ts
+   bun run peek.ts; Remove-Item peek.ts
    ```
 
    Run 2's task payload also embeds `previous` (the pointer channel), and the
