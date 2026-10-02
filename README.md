@@ -30,7 +30,7 @@ daemon/src/
   opencode.ts            # only file allowed to know @opencode-ai/* (beta firewall)
   paths.ts               # project-local path resolution
   config.ts              # claw.json parsing (schedules, cadences, dispatch model, timeouts, policy)
-  db.ts                  # SQLite (bun:sqlite, WAL): tasks + schedules (+ memory next)
+  db.ts                  # SQLite (bun:sqlite, WAL): tasks + schedules + FTS5 memory store
   clock.ts               # SystemClock — the only real-wall-time implementation
   scheduler.ts           # tick loop: kill switch, due check, in-flight guard, incremental prompts, dispatch
   completion.ts          # event-driven completion: terminal events → done/failed, watchdog, orphan recovery
@@ -192,7 +192,7 @@ still in flight is held, not stacked.
 - [x] Ticket 04 — delegation path
 - [x] Ticket 05 — watchdog end-to-end (two unattended incremental runs, live-proven)
 - [x] Ticket 06 — centralized permission policy
-- [ ] Ticket 07 — memory store (FTS5)
+- [x] Ticket 07 — memory store (FTS5)
 - [ ] Ticket 08 — memory tools & auto-injection
 
 ## Known environment quirk (not a code bug)

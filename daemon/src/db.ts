@@ -1,5 +1,5 @@
 /**
- * SQLite storage (SPEC decision 8): tasks + schedules, WAL mode.
+ * SQLite storage (SPEC decision 8): tasks + schedules + memory, WAL mode.
  * All timestamps are injected by the caller (fake-clock discipline —
  * storage code never reads wall time itself).
  */
@@ -29,6 +29,29 @@ export interface ScheduleRow {
   target: string
   enabled: boolean
   lastDispatchedAt: number | null
+}
+
+/**
+ * Persistent memory entry (ticket 07). Plain data only — the interface says
+ * nothing about FTS5, BM25, or triggers; a future embedding/vector backend
+ * implements these same two methods without touching callers.
+ */
+export interface MemoryEntry {
+  id: string
+  text: string
+  tags: string[]
+  createdAt: number
+}
+
+export interface MemorySaveInput {
+  text: string
+  tags?: string[]
+}
+
+export interface MemorySearchOptions {
+  /** Entries must carry ALL of these tags. */
+  tags?: string[]
+  limit?: number
 }
 
 interface TaskRow {
@@ -66,6 +89,43 @@ function toTask(r: TaskRow): Task {
   }
 }
 
+interface MemoryRow {
+  id: string
+  text: string
+  tags: string
+  created_at: number
+}
+
+function toMemoryEntry(r: MemoryRow): MemoryEntry {
+  return { id: r.id, text: r.text, tags: JSON.parse(r.tags) as string[], createdAt: r.created_at }
+}
+
+/** Normalize tags: trim, drop blanks, dedupe preserving order. */
+function cleanTags(tags: string[] | undefined): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const t of tags ?? []) {
+    const tag = t.trim()
+    if (tag.length === 0 || seen.has(tag)) continue
+    seen.add(tag)
+    out.push(tag)
+  }
+  return out
+}
+
+/**
+ * Quote each whitespace-separated token so user input can never break FTS5
+ * syntax (parens, quotes, AND/OR become literal text, joined by implicit AND).
+ */
+function toFtsQuery(query: string): string {
+  return query
+    .split(/\s+/)
+    .map((t) => t.replace(/"/g, "").trim())
+    .filter((t) => t.length > 0)
+    .map((t) => `"${t}"`)
+    .join(" ")
+}
+
 export interface ClawDb {
   close(): void
   /** Escape hatch for tests/assertions against the raw schema. */
@@ -96,6 +156,13 @@ export interface ClawDb {
   upsertSchedules(rows: Array<Omit<ScheduleRow, "lastDispatchedAt">>): void
   listSchedules(): ScheduleRow[]
   setLastDispatched(id: string, ts: number): void
+
+  /** Save one memory entry (tags optional, default []). */
+  memorySave(input: MemorySaveInput, now: number): MemoryEntry
+  /** Fetch one entry by id (null when unknown). */
+  memoryGet(id: string): MemoryEntry | null
+  /** Keyword search over text+tags (BM25-ranked), optionally narrowed by tags. */
+  memorySearch(query: string, opts?: MemorySearchOptions): MemoryEntry[]
 }
 
 export function openClawDb(filePath: string): ClawDb {
@@ -122,6 +189,39 @@ export function openClawDb(filePath: string): ClawDb {
       enabled INTEGER NOT NULL DEFAULT 1,
       last_dispatched_at INTEGER
     );
+  `)
+  // Memory store (ticket 07, SPEC decision 8): content table + external-content
+  // FTS5 index over text+tags, kept in sync by triggers. All three DDLs are
+  // IF NOT EXISTS / DROP-then-CREATE, so reopening (restart) never duplicates
+  // or throws. Callers only ever see memorySave/memorySearch — MATCH, bm25,
+  // and trigger names never leave this module.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS memory (
+      id TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      tags TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(text, tags, content='memory', content_rowid='rowid');
+  `)
+  db.run(`DROP TRIGGER IF EXISTS memory_ai`)
+  db.run(`DROP TRIGGER IF EXISTS memory_ad`)
+  db.run(`DROP TRIGGER IF EXISTS memory_au`)
+  db.run(`
+    CREATE TRIGGER memory_ai AFTER INSERT ON memory BEGIN
+      INSERT INTO memory_fts(rowid, text, tags) VALUES (new.rowid, new.text, new.tags);
+    END;
+  `)
+  db.run(`
+    CREATE TRIGGER memory_ad AFTER DELETE ON memory BEGIN
+      INSERT INTO memory_fts(memory_fts, rowid, text, tags) VALUES ('delete', old.rowid, old.text, old.tags);
+    END;
+  `)
+  db.run(`
+    CREATE TRIGGER memory_au AFTER UPDATE ON memory BEGIN
+      INSERT INTO memory_fts(memory_fts, rowid, text, tags) VALUES ('delete', old.rowid, old.text, old.tags);
+      INSERT INTO memory_fts(rowid, text, tags) VALUES (new.rowid, new.text, new.tags);
+    END;
   `)
 
   // Positional `?` parameters throughout: key-name binding of $params is
@@ -176,6 +276,10 @@ export function openClawDb(filePath: string): ClawDb {
       "UPDATE schedules SET last_dispatched_at = ? WHERE id = ?",
     ),
     setTaskSession: db.query("UPDATE tasks SET result_json = ? WHERE id = ?"),
+    insertMemory: db.query(
+      `INSERT INTO memory (id, text, tags, created_at) VALUES (?, ?, ?, ?)`,
+    ),
+    getMemory: db.query("SELECT * FROM memory WHERE id = ?"),
   }
 
   return {
@@ -271,6 +375,43 @@ export function openClawDb(filePath: string): ClawDb {
 
     setLastDispatched(id, ts) {
       stmt.setLastDispatched.run(ts, id)
+    },
+
+    memorySave(input, now) {
+      if (typeof input.text !== "string" || input.text.trim().length === 0) {
+        throw new Error("memorySave: 'text' must be a non-empty string")
+      }
+      const id = crypto.randomUUID()
+      const tags = cleanTags(input.tags)
+      stmt.insertMemory.run(id, input.text, JSON.stringify(tags), now)
+      return this.memoryGet(id)!
+    },
+
+    memoryGet(id) {
+      const row = (stmt.getMemory.get(id) as MemoryRow | null) ?? null
+      return row ? toMemoryEntry(row) : null
+    },
+
+    memorySearch(query, opts = {}) {
+      const limit = Math.max(1, Math.min(200, Math.trunc(opts.limit ?? 10) || 10))
+      const tags = cleanTags(opts.tags)
+      const tagFilter = tags.map(() => `EXISTS (SELECT 1 FROM json_each(m.tags) WHERE value = ?)`).join(" AND ")
+      const match = toFtsQuery(query)
+      if (match.length > 0) {
+        const where = [`memory_fts MATCH ?`, ...(tagFilter ? [tagFilter] : [])].join(" AND ")
+        const rows = db
+          .query(
+            `SELECT m.* FROM memory_fts JOIN memory m ON m.rowid = memory_fts.rowid
+             WHERE ${where} ORDER BY bm25(memory_fts) LIMIT ?`,
+          )
+          .all(match, ...tags, limit) as MemoryRow[]
+        return rows.map(toMemoryEntry)
+      }
+      const where = tagFilter.length > 0 ? `WHERE ${tagFilter}` : ""
+      const rows = db
+        .query(`SELECT m.* FROM memory m ${where} ORDER BY m.created_at DESC LIMIT ?`)
+        .all(...tags, limit) as MemoryRow[]
+      return rows.map(toMemoryEntry)
     },
   }
 }

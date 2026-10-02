@@ -4,10 +4,10 @@
 
 **Blocked by:** 02 (Scheduler & dispatch skeleton).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Save then keyword search returns the saved entry with sensible ranking
-- [ ] Tag-filtered search works
-- [ ] Entries survive close/reopen of the database (restart semantics)
-- [ ] The public interface leaks no storage-engine specifics (FTS details stay internal)
-- [ ] WAL mode enabled; schema migrations applied idempotently on open
+- [x] Save then keyword search returns the saved entry with sensible ranking
+- [x] Tag-filtered search works
+- [x] Entries survive close/reopen of the database (restart semantics)
+- [x] The public interface leaks no storage-engine specifics (FTS details stay internal)
+- [x] WAL mode enabled; schema migrations applied idempotently on open
