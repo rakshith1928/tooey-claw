@@ -4,9 +4,44 @@
  */
 import type { ClawOpenCodePort, ClawEvent, ModelRef } from "../src/ports"
 import type { Clock } from "../src/ports"
+import type { ClawDb } from "../src/db"
+import { rmSync } from "node:fs"
 
 /** Drain all pending microtasks (fake-clock tests: no real sleeping involved). */
 export const flush = () => new Promise((r) => setTimeout(r, 0))
+
+/**
+ * Deterministic test-DB teardown: bun:sqlite finalizes prepared statements
+ * on GC, not on db.close() — so without a blocking collection, the WAL/SHM
+ * files can still be locked when rmSync runs (EBUSY on Windows). Flushing
+ * finalizers here makes close+delete reliable; a genuinely leaked external
+ * handle would still fail the delete below.
+ */
+export function closeDb(db: ClawDb): void {
+  db.close()
+  Bun.gc(true)
+}
+
+/**
+ * rmSync with short retries: a backstop for transient external locks
+ * (antivirus/indexer scans of fresh files). The deterministic finalizer
+ * issue is handled by closeDb; this only absorbs outside interference.
+ */
+export function rmTmp(p: string, attempts = 6): void {
+  let last: unknown = null
+  for (let i = 0; i < attempts; i++) {
+    try {
+      rmSync(p, { recursive: true, force: true })
+      return
+    } catch (e) {
+      const code = (e as { code?: string })?.code
+      if (code !== "EBUSY" && code !== "EPERM") throw e
+      last = e
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
+    }
+  }
+  throw last
+}
 
 export class FakeClock implements Clock {
   time = 0

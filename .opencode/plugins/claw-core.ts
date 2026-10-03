@@ -15,6 +15,7 @@ import path from "node:path"
 import { sessionControl, type SessionApiLike } from "../../daemon/src/opencode"
 import { runDelegation } from "../../daemon/src/delegate"
 import { taskCreate, taskList, taskUpdate, taskSummary } from "../../daemon/src/taskops"
+import { memorySaveOp, memorySearchOp, memorySummary } from "../../daemon/src/memoryops"
 import { openClawDb } from "../../daemon/src/db"
 import { canonical } from "../../daemon/src/paths"
 import { defaultConfigPath, loadConfig, type Policy } from "../../daemon/src/config"
@@ -143,6 +144,44 @@ export default Plugin.define({
         options: { namespace: "claw" },
         execute: async (input: { id: string; status: "running" | "done" | "failed"; error?: string; result?: unknown }) => ({
           content: json(taskSummary(taskUpdate(db, SystemClock, input))),
+        }),
+      })
+
+      draft.add({
+        name: "memory_save",
+        description:
+          "Save a compact verdict or fact to durable memory (survives restarts). Future runs recall it by keyword search. Keep entries short: one verdict + the pointer the next run needs.",
+        input: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "The compact text to remember" },
+            tags: { type: "array", items: { type: "string" }, description: "Optional tags, e.g. [\"watchdog\", \"repo-x\"]" },
+          },
+          required: ["text"],
+          additionalProperties: false,
+        },
+        options: { namespace: "claw" },
+        execute: async (input: { text: string; tags?: string[] }) => ({
+          content: json(memorySummary(memorySaveOp(db, SystemClock, { text: input.text, tags: input.tags }))),
+        }),
+      })
+
+      draft.add({
+        name: "memory_search",
+        description: "Keyword-search durable memory (BM25-ranked), optionally narrowed to entries carrying all given tags.",
+        input: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Keywords to search for" },
+            tags: { type: "array", items: { type: "string" }, description: "Entries must carry ALL of these tags" },
+            limit: { type: "number", description: "Max entries (default 10)" },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+        options: { namespace: "claw" },
+        execute: async (input: { query: string; tags?: string[]; limit?: number }) => ({
+          content: json(memorySearchOp(db, input ?? {}).map(memorySummary)),
         }),
       })
 

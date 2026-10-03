@@ -5,7 +5,7 @@ import path from "node:path"
 import { openClawDb, type ClawDb } from "../src/db"
 import { parseConfig, type ClawConfig } from "../src/config"
 import { createScheduler, type TickResult } from "../src/scheduler"
-import { FakeClock, flush, makeFakePort } from "./helpers"
+import { FakeClock, closeDb, flush, makeFakePort, rmTmp } from "./helpers"
 
 const MIN = 60_000
 
@@ -57,8 +57,8 @@ beforeEach(() => {
   killPath = path.join(tmp, "kill")
 })
 afterEach(() => {
-  db.close()
-  rmSync(tmp, { recursive: true, force: true })
+  closeDb(db)
+  rmTmp(tmp)
 })
 
 describe("scheduler — due dispatch (ticket: due schedule dispatches exactly once)", () => {
@@ -132,7 +132,7 @@ describe("scheduler — durable task row (ticket: running before prompt)", () =>
   it("persists last_dispatched_at so a restart does not duplicate", async () => {
     await scheduler().tick()
     // Simulate daemon restart: same DB, fresh scheduler + fresh clock past cadence.
-    db.close()
+    closeDb(db)
     db = openClawDb(path.join(tmp, "claw.db"))
     const fake2 = makeFakePort()
     const s2 = createScheduler({
@@ -261,6 +261,42 @@ describe("scheduler — single-flight lock (ticket: blocks a second concurrent r
       db.queryAll<{ payload_json: string }>("SELECT payload_json FROM tasks ORDER BY created_at")[1]!.payload_json,
     )
     expect(payload2.previous).toBeNull() // failed run leaves no pointer
+  })
+})
+
+describe("scheduler — memory injection (ticket 08: dispatched prompt carries injected block)", () => {
+  it("prepends relevant memories + open tasks to the dispatch prompt", async () => {
+    db.memorySave({ text: "VERDICT: repo has 2 open issues, status recorded", tags: ["watchdog"] }, 0)
+    // Every query token (repo/issues/status) appears in the memory → keyword match.
+    const cfg = parseConfig({
+      schedules: [{ id: "watchdog-a", repo: "C:\\r", cadence: "every:15m", prompt: "repo issues status" }],
+    })
+    await scheduler(cfg).tick()
+
+    const prompt = fake.prompts[0]!.text
+    expect(prompt).toContain("--- RELEVANT MEMORIES (auto-injected")
+    expect(prompt).toContain("VERDICT: repo has 2 open issues")
+    expect(prompt).toContain("repo issues status") // user prompt intact, after the block
+    expect(prompt.indexOf("RELEVANT MEMORIES")).toBeLessThan(prompt.indexOf("repo issues status"))
+  })
+
+  it("no relevant memories and no open tasks → prompt untouched (no empty blocks)", async () => {
+    await scheduler().tick()
+    expect(fake.prompts[0]!.text).toBe("Check repo A since last run.")
+  })
+
+  it("injection is assembled BEFORE the claim: the run never lists itself as open", async () => {
+    db.memorySave({ text: "Check repo A background notes", tags: [] }, 0)
+    const cfg = parseConfig({
+      schedules: [{ id: "watchdog-a", repo: "C:\\r", cadence: "every:15m", prompt: "Check repo A" }],
+    })
+    await scheduler(cfg).tick()
+    const prompt = fake.prompts[0]!.text
+    // Memories matched (every token present) → block present…
+    expect(prompt).toContain("RELEVANT MEMORIES")
+    // …but the only task row is this run's own watchdog row → no open-tasks block.
+    expect(prompt).not.toContain("OPEN TASKS")
+    expect(prompt).not.toContain("watchdog (running)")
   })
 })
 

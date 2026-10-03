@@ -12,6 +12,7 @@
 import { existsSync } from "node:fs"
 import type { ClawConfig } from "./config"
 import { previousResult } from "./completion"
+import { assembleInjection } from "./memoryops"
 import type { ClawDb } from "./db"
 import type { Clock, ClawOpenCodePort } from "./ports"
 
@@ -113,7 +114,10 @@ async function runTick(deps: SchedulerDeps): Promise<TickResult> {
     // life sees an in-flight task and a fresh claim — no duplicate dispatch.
     // Payload carries the previous run's compact result (decision 11): the
     // orchestrator prompt reads `previous.pointer` for incremental checks.
+    // Injection is assembled BEFORE the claim so the run never lists itself
+    // among open tasks (ticket 08).
     const previous = previousResult(deps.db, s.id)
+    const injection = assembleInjection(deps.db, { query: s.prompt })
     const task = deps.db.createTask(
       {
         type: "watchdog",
@@ -132,9 +136,10 @@ async function runTick(deps: SchedulerDeps): Promise<TickResult> {
         ...(deps.config.model ? { model: deps.config.model } : {}),
       })
       deps.db.setTaskSession(task.id, sessionID)
-      // The prompt inlines the previous verdict + pointer so the orchestrator
-      // acts incrementally ("since last time") with zero tool calls.
-      await deps.port.prompt(sessionID, renderPrompt(s.prompt, previous))
+      // Auto-injected memories + open tasks first, then the incremental
+      // previous-run section — the orchestrator gets full context, zero calls.
+      const prompt = [injection, renderPrompt(s.prompt, previous)].filter((p) => p.length > 0).join("\n\n")
+      await deps.port.prompt(sessionID, prompt)
       dispatched.push({ scheduleId: s.id, taskId: task.id, sessionID })
       log(`dispatched ${s.id} → session ${sessionID} (task ${task.id})${previous ? " [incremental]" : ""}`)
     } catch (error) {

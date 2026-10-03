@@ -4,9 +4,9 @@
 
 **Blocked by:** 04 (Delegation path), 07 (Memory store FTS5).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Both memory tools execute correctly from an agent session (round-trip via fake client)
-- [ ] Injection-content assembly is snapshot-tested: memories block + open-tasks block shape stable
-- [ ] Dispatched prompt demonstrably contains the injected block (fake-client assertion)
-- [ ] End-to-end: verdict written in run N is present in run N+1's prompt after daemon restart
+- [x] Both memory tools execute correctly from an agent session (round-trip via fake client)
+- [x] Injection-content assembly is snapshot-tested: memories block + open-tasks block shape stable
+- [x] Dispatched prompt demonstrably contains the injected block (fake-client assertion)
+- [x] End-to-end: verdict written in run N is present in run N+1's prompt after daemon restart

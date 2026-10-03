@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { openClawDb, type ClawDb } from "../src/db"
 import { runDelegation, type DelegateDeps } from "../src/delegate"
-import { FakeClock, flush, makeFakePort } from "./helpers"
+import { FakeClock, closeDb, flush, makeFakePort } from "./helpers"
 
 const SEC = 1000
 const TIMEOUT = 300 * SEC
@@ -31,7 +31,7 @@ beforeEach(() => {
   }
 })
 afterEach(() => {
-  db.close()
+  closeDb(db)
   rmSync(tmp, { recursive: true, force: true })
 })
 

@@ -12,7 +12,7 @@ import {
   type CompletionDeps,
 } from "../src/completion"
 import type { ClawEvent } from "../src/ports"
-import { FakeClock, flush, makeFakePort } from "./helpers"
+import { FakeClock, closeDb, flush, makeFakePort } from "./helpers"
 
 const MIN = 60_000
 const TIMEOUT = 15 * MIN
@@ -39,7 +39,7 @@ beforeEach(() => {
   deps = { db, clock, port: fake.port, log: () => {} }
 })
 afterEach(() => {
-  db.close()
+  closeDb(db)
   rmSync(tmp, { recursive: true, force: true })
 })
 
@@ -148,7 +148,7 @@ describe("completion — crash recovery (ticket: kill mid-run → restart)", () 
     db.setLastDispatched("watchdog-a", 0)
 
     // ── Restart: reopen the same DB file with fresh process state ──
-    db.close()
+    closeDb(db)
     db = openClawDb(path.join(tmp, "claw.db"))
     deps = { db, clock, port: fake.port, log: () => {} }
 

@@ -6,7 +6,8 @@ import { openClawDb, type ClawDb } from "../src/db"
 import { parseConfig } from "../src/config"
 import { createScheduler } from "../src/scheduler"
 import { watchEvents } from "../src/completion"
-import { FakeClock, flush, makeFakePort } from "./helpers"
+import { memorySaveOp } from "../src/memoryops"
+import { FakeClock, closeDb, flush, makeFakePort } from "./helpers"
 
 /**
  * Ticket 05 — the full two-run chain at the daemon-loop seam:
@@ -28,7 +29,7 @@ beforeEach(() => {
   fake = makeFakePort()
 })
 afterEach(() => {
-  db.close()
+  closeDb(db)
   rmSync(tmp, { recursive: true, force: true })
 })
 
@@ -104,4 +105,34 @@ it("ticket: two consecutive unattended runs — run 2 is incremental, both verdi
 
   fake.closeEvents()
   await watcher
+})
+
+it("ticket 08: verdict saved during run N is recalled by run N+1 after a daemon restart", async () => {
+  const dbFile = path.join(tmp, "claw.db")
+  const config = parseConfig({
+    schedules: [{ id: "demo", repo: "C:\\r", cadence: "every:15m", prompt: "repo status" }],
+  })
+  const mkScheduler = (port: typeof fake.port) =>
+    createScheduler({ clock, port, db, config, clawRoot: "C:\\claw", killSwitchPath: path.join(tmp, "kill"), log: () => {} })
+
+  // ── Run N: dispatch, agent saves its verdict via memory_save, run completes.
+  const r1 = await mkScheduler(fake.port).tick()
+  expect(r1.dispatched).toHaveLength(1)
+  expect(fake.prompts[0]!.text).not.toContain("RELEVANT MEMORIES") // cold memory
+  memorySaveOp(db, clock, { text: "VERDICT: repo has 2 open issues, status green", tags: ["watchdog"] })
+  db.finishTask(r1.dispatched[0]!.taskId, "done", { result: { verdict: "ok" } }, clock.now())
+
+  // ── Daemon restart: same DB file, fresh process state (db handle + port + scheduler).
+  closeDb(db)
+  db = openClawDb(dbFile)
+  const fake2 = makeFakePort()
+
+  clock.advance(15 * MIN)
+  const r2 = await mkScheduler(fake2.port).tick()
+  expect(r2.dispatched).toHaveLength(1)
+
+  // The verdict survived the restart and is injected into run N+1's prompt.
+  const prompt2 = fake2.prompts[0]!.text
+  expect(prompt2).toContain("--- RELEVANT MEMORIES (auto-injected")
+  expect(prompt2).toContain("VERDICT: repo has 2 open issues, status green")
 })

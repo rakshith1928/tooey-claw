@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { openClawDb, type ClawDb } from "../src/db"
+import { closeDb } from "./helpers"
 
 let tmp: string
 let db: ClawDb
@@ -12,7 +13,7 @@ beforeEach(() => {
   db = openClawDb(path.join(tmp, "claw.db"))
 })
 afterEach(() => {
-  db.close()
+  closeDb(db)
   rmSync(tmp, { recursive: true, force: true })
 })
 
@@ -29,7 +30,7 @@ describe("db — schema", () => {
 
   it("reopening an existing db preserves rows (state survives restarts)", () => {
     const t = db.createTask({ type: "watchdog", payload: { repo: "x" } }, 1000)
-    db.close()
+    closeDb(db)
     db = openClawDb(path.join(tmp, "claw.db"))
     expect(db.getTask(t.id)?.status).toBe("queued")
   })

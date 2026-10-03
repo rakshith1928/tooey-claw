@@ -224,6 +224,38 @@ export function openClawDb(filePath: string): ClawDb {
     END;
   `)
 
+  // Prepared-statement cache for memory search (ticket 08): the tag filter
+  // width varies per call, so cache one statement per tag count. Besides
+  // avoiding per-tick prepare churn in the dispatch loop, this keeps statement
+  // lifetimes tied to the db handle instead of per-call GC — unfinalized
+  // per-call statements race Windows file locks at close+delete time.
+  type SearchStmt = ReturnType<Database["query"]>
+  const ftsSearchCache = new Map<number, SearchStmt>()
+  const listSearchCache = new Map<number, SearchStmt>()
+  const tagFilterSql = (n: number): string =>
+    Array.from({ length: n }, () => `EXISTS (SELECT 1 FROM json_each(m.tags) WHERE value = ?)`).join(" AND ")
+  function ftsSearchStmt(tagCount: number): SearchStmt {
+    let s = ftsSearchCache.get(tagCount)
+    if (!s) {
+      const where = ["memory_fts MATCH ?", ...(tagCount > 0 ? [tagFilterSql(tagCount)] : [])].join(" AND ")
+      s = db.query(
+        `SELECT m.* FROM memory_fts JOIN memory m ON m.rowid = memory_fts.rowid
+         WHERE ${where} ORDER BY bm25(memory_fts) LIMIT ?`,
+      )
+      ftsSearchCache.set(tagCount, s)
+    }
+    return s
+  }
+  function listSearchStmt(tagCount: number): SearchStmt {
+    let s = listSearchCache.get(tagCount)
+    if (!s) {
+      const where = tagCount > 0 ? `WHERE ${tagFilterSql(tagCount)}` : ""
+      s = db.query(`SELECT m.* FROM memory m ${where} ORDER BY m.created_at DESC LIMIT ?`)
+      listSearchCache.set(tagCount, s)
+    }
+    return s
+  }
+
   // Positional `?` parameters throughout: key-name binding of $params is
   // version-sensitive in bun; positional is not.
   const stmt = {
@@ -395,22 +427,12 @@ export function openClawDb(filePath: string): ClawDb {
     memorySearch(query, opts = {}) {
       const limit = Math.max(1, Math.min(200, Math.trunc(opts.limit ?? 10) || 10))
       const tags = cleanTags(opts.tags)
-      const tagFilter = tags.map(() => `EXISTS (SELECT 1 FROM json_each(m.tags) WHERE value = ?)`).join(" AND ")
       const match = toFtsQuery(query)
       if (match.length > 0) {
-        const where = [`memory_fts MATCH ?`, ...(tagFilter ? [tagFilter] : [])].join(" AND ")
-        const rows = db
-          .query(
-            `SELECT m.* FROM memory_fts JOIN memory m ON m.rowid = memory_fts.rowid
-             WHERE ${where} ORDER BY bm25(memory_fts) LIMIT ?`,
-          )
-          .all(match, ...tags, limit) as MemoryRow[]
+        const rows = ftsSearchStmt(tags.length).all(match, ...tags, limit) as MemoryRow[]
         return rows.map(toMemoryEntry)
       }
-      const where = tagFilter.length > 0 ? `WHERE ${tagFilter}` : ""
-      const rows = db
-        .query(`SELECT m.* FROM memory m ${where} ORDER BY m.created_at DESC LIMIT ?`)
-        .all(...tags, limit) as MemoryRow[]
+      const rows = listSearchStmt(tags.length).all(...tags, limit) as MemoryRow[]
       return rows.map(toMemoryEntry)
     },
   }

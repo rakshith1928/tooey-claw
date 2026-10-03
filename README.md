@@ -31,6 +31,7 @@ daemon/src/
   paths.ts               # project-local path resolution
   config.ts              # claw.json parsing (schedules, cadences, dispatch model, timeouts, policy)
   db.ts                  # SQLite (bun:sqlite, WAL): tasks + schedules + FTS5 memory store
+  memoryops.ts           # memory_save/search logic + injection assembly (memories + open tasks)
   clock.ts               # SystemClock — the only real-wall-time implementation
   scheduler.ts           # tick loop: kill switch, due check, in-flight guard, incremental prompts, dispatch
   completion.ts          # event-driven completion: terminal events → done/failed, watchdog, orphan recovery
@@ -52,6 +53,7 @@ Registered by `claw-core` under the `claw` namespace:
 |---|---|
 | `delegate` | Hand a bounded sub-task to another agent (e.g. `worker`); worker's answer returns as the tool result. Only the orchestrator may delegate (depth cap). |
 | `task_create` / `task_list` / `task_update` | Durable task rows that outlive the session (follow-ups, tracking). |
+| `memory_save` / `memory_search` | Durable verdict memory (FTS5 keyword search, tag-narrowed). Saved verdicts are auto-injected into future dispatched prompts. |
 | `policy` | Inspect the live permission policy: allow list, source file, bypass state. Answers "why was my tool denied". |
 | `claw_probe` | Liveness check for the plugin itself. |
 
@@ -193,7 +195,7 @@ still in flight is held, not stacked.
 - [x] Ticket 05 — watchdog end-to-end (two unattended incremental runs, live-proven)
 - [x] Ticket 06 — centralized permission policy
 - [x] Ticket 07 — memory store (FTS5)
-- [ ] Ticket 08 — memory tools & auto-injection
+- [x] Ticket 08 — memory tools & auto-injection
 
 ## Known environment quirk (not a code bug)
 

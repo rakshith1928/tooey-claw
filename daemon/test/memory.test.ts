@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { openClawDb, type ClawDb, type MemoryEntry } from "../src/db"
+import { closeDb } from "./helpers"
 
 /**
  * Ticket 07: persistent memory behind a narrow interface (save/search), FTS5
@@ -21,7 +22,7 @@ beforeEach(() => {
   db = openClawDb(dbFile)
 })
 afterEach(() => {
-  db.close()
+  closeDb(db)
   rmSync(tmp, { recursive: true, force: true })
 })
 
@@ -89,7 +90,7 @@ describe("memory — tag-filtered search (ticket)", () => {
 describe("memory — restart semantics (ticket: close/reopen)", () => {
   it("entries survive close and reopen of the same DB file", () => {
     db.memorySave({ text: "survives restart verdict", tags: ["watchdog"] }, 1000)
-    db.close()
+    closeDb(db)
     db = openClawDb(dbFile) // simulated process restart
 
     const hits = db.memorySearch("survives restart", { tags: ["watchdog"] })
@@ -99,9 +100,9 @@ describe("memory — restart semantics (ticket: close/reopen)", () => {
 
   it("reopening twice applies migrations idempotently (no duplicate rows, no throw)", () => {
     db.memorySave({ text: "idempotent", tags: [] }, 1000)
-    db.close()
+    closeDb(db)
     db = openClawDb(dbFile)
-    db.close()
+    closeDb(db)
     db = openClawDb(dbFile)
     expect(db.memorySearch("idempotent")).toHaveLength(1)
   })
